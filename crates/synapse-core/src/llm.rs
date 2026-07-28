@@ -33,14 +33,15 @@ use crate::routing::Brain;
 ///   Ollama, vLLM, LM Studio, OpenRouter… anyone the user brings their own
 ///   key/endpoint for.
 ///
-/// An on-device runtime (LiteRT/Gemma, SYN-155) is NOT a new wire format: it
-/// plugs in as a host-supplied backend (a UniFFI callback that bypasses HTTP
-/// entirely). That path lands on top of this seam, not inside this enum.
+/// - `Local` — an on-device runtime (LiteRT/Gemma, SYN-155). NOT a wire format:
+///   the host owns the runtime and the core calls INTO it through the
+///   [`LocalLlm`] backend on [`LlmConfig::local`], bypassing HTTP entirely.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum LlmProvider {
     #[default]
     Anthropic,
     OpenAiCompatible,
+    Local,
 }
 
 impl LlmProvider {
@@ -51,14 +52,31 @@ impl LlmProvider {
             Some("openai") | Some("openai-compatible") | Some("openai_compatible") => {
                 Self::OpenAiCompatible
             }
+            Some("local") | Some("gemma-local") | Some("on-device") | Some("on_device") => {
+                Self::Local
+            }
             _ => Self::Anthropic,
         }
     }
 }
 
+/// A host-supplied on-device LLM (SYN-155): the mobile app owns the runtime
+/// (LiteRT-LM / Gemma) and the core calls INTO it instead of over HTTP. This is
+/// the foreign-backend extension point the provider seam (SYN-150) reserved.
+///
+/// The core hands the already-built, `{today}`-substituted prompt (system + the
+/// user turn); the host applies the model's chat template and returns the raw
+/// generated text — the same string an HTTP body's `content[0].text` would
+/// carry (JSON for classify, prose for summaries). Called on the core's own
+/// (worker) thread, synchronously.
+pub trait LocalLlm: Send + Sync {
+    fn generate(&self, system: String, user: String, max_tokens: u32)
+        -> Result<String, CoreError>;
+}
+
 /// Everything the host resolves about "how to call the model": key handling
 /// (incl. the fuel-proxy seam) stays host policy; the core just executes.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct LlmConfig {
     pub model: String,
     pub api_key: String,
@@ -75,6 +93,22 @@ pub struct LlmConfig {
     pub prompts_dir: String,
     /// Injected into the prompt (`{today}`) — Python used module-load date.
     pub today: String,
+    /// The on-device backend, required when `provider == Local` (SYN-155). Kept
+    /// out of `Debug` (a foreign callback has no meaningful repr).
+    pub local: Option<std::sync::Arc<dyn LocalLlm>>,
+}
+
+impl std::fmt::Debug for LlmConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LlmConfig")
+            .field("model", &self.model)
+            .field("provider", &self.provider)
+            .field("base_url", &self.base_url)
+            .field("prompts_dir", &self.prompts_dir)
+            .field("today", &self.today)
+            .field("local", &self.local.as_ref().map(|_| "<on-device backend>"))
+            .finish_non_exhaustive()
+    }
 }
 
 const MAX_TOKENS: u32 = 4096;
@@ -150,7 +184,38 @@ pub(crate) fn post_messages(config: &LlmConfig, params: &Value) -> Result<Value,
     match config.provider {
         LlmProvider::Anthropic => post_anthropic(config, params),
         LlmProvider::OpenAiCompatible => post_openai(config, params),
+        LlmProvider::Local => post_local(config, params),
     }
+}
+
+/// On-device path (SYN-155): flatten the request to system+user text, hand it to
+/// the host's [`LocalLlm`] backend, wrap the reply in the Anthropic shape. No
+/// HTTP. A truncation is the host's concern — we report `end_turn` (the guard
+/// keys off `max_tokens`, which an on-device backend never emits).
+fn post_local(config: &LlmConfig, params: &Value) -> Result<Value, CoreError> {
+    let backend = config.local.as_ref().ok_or_else(|| {
+        CoreError::LlmHttp("provider=local but no on-device backend was supplied".to_string())
+    })?;
+    let system = params.get("system").map(flatten_text).unwrap_or_default();
+    let user = params
+        .get("messages")
+        .and_then(Value::as_array)
+        .map(|arr| {
+            arr.iter()
+                .map(|m| flatten_text(m.get("content").unwrap_or(&Value::Null)))
+                .collect::<Vec<_>>()
+                .join("\n\n")
+        })
+        .unwrap_or_default();
+    let max_tokens = params
+        .get("max_tokens")
+        .and_then(Value::as_u64)
+        .unwrap_or(MAX_TOKENS as u64) as u32;
+    let text = backend.generate(system, user, max_tokens)?;
+    Ok(json!({
+        "content": [{"type": "text", "text": text}],
+        "stop_reason": "end_turn",
+    }))
 }
 
 /// Map a `ureq` transport/status error to `LlmHttp` (shared by both providers).
@@ -549,6 +614,7 @@ mod tests {
             fuel_token: None,
             prompts_dir: String::new(),
             today: "2026-07-20".into(),
+            local: None,
         }
     }
 
@@ -662,6 +728,55 @@ mod tests {
         let text = post_messages_text(&cfg, &json!({})).unwrap();
         assert_eq!(text, "une fiche", "the untruncated retry must win");
         assert_eq!(rx.iter().count(), 2);
+    }
+
+    // ── SYN-155: on-device (Local) backend ───────────────────────────────
+    /// Records what the core flattened, echoes a canned reply — stands in for
+    /// the Kotlin LiteRT backend without a device.
+    struct StubLocal {
+        seen_system: std::sync::Mutex<String>,
+        seen_user: std::sync::Mutex<String>,
+        reply: String,
+    }
+    impl LocalLlm for StubLocal {
+        fn generate(&self, system: String, user: String, _max: u32) -> Result<String, CoreError> {
+            *self.seen_system.lock().unwrap() = system;
+            *self.seen_user.lock().unwrap() = user;
+            Ok(self.reply.clone())
+        }
+    }
+
+    #[test]
+    fn local_backend_receives_flattened_prompt_and_reply_is_wrapped() {
+        let stub = std::sync::Arc::new(StubLocal {
+            seen_system: std::sync::Mutex::new(String::new()),
+            seen_user: std::sync::Mutex::new(String::new()),
+            reply: "{\"language\":\"fr\"}".to_string(),
+        });
+        let mut cfg = cfg_provider(String::new(), LlmProvider::Local);
+        cfg.local = Some(stub.clone());
+        let params = json!({
+            "max_tokens": 512,
+            "system": [{"type": "text", "text": "tu es un classifieur",
+                        "cache_control": {"type": "ephemeral"}}],
+            "messages": [{"role": "user", "content": "note du jour"}],
+        });
+        let body = post_messages(&cfg, &params).unwrap();
+        // The reply is wrapped so response helpers stay provider-agnostic.
+        assert_eq!(body["content"][0]["text"], "{\"language\":\"fr\"}");
+        assert_eq!(body["stop_reason"], "end_turn");
+        // The backend saw the flattened prompt, cache_control dropped.
+        assert_eq!(*stub.seen_system.lock().unwrap(), "tu es un classifieur");
+        assert_eq!(*stub.seen_user.lock().unwrap(), "note du jour");
+    }
+
+    #[test]
+    fn local_provider_without_backend_errors() {
+        let cfg = cfg_provider(String::new(), LlmProvider::Local); // local = None
+        assert!(matches!(
+            post_messages(&cfg, &json!({})),
+            Err(CoreError::LlmHttp(_))
+        ));
     }
 
     #[test]
