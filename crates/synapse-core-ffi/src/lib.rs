@@ -30,6 +30,20 @@ impl From<synapse_core::CoreError> for CoreError {
     }
 }
 
+/// Reverse conversion (SYN-155): a foreign on-device backend raises the FFI
+/// `CoreError`; the core's `LocalLlm` trait speaks `synapse_core::CoreError`.
+impl From<CoreError> for synapse_core::CoreError {
+    fn from(e: CoreError) -> Self {
+        match e {
+            CoreError::ModelLoad { msg } => synapse_core::CoreError::ModelLoad(msg),
+            CoreError::Embedding { msg } => synapse_core::CoreError::Embedding(msg),
+            CoreError::Storage { msg } => synapse_core::CoreError::Storage(msg),
+            CoreError::LlmHttp { msg } => synapse_core::CoreError::LlmHttp(msg),
+            CoreError::LlmContent { msg } => synapse_core::CoreError::LlmContent(msg),
+        }
+    }
+}
+
 #[uniffi::export]
 pub fn embedding_dim() -> u32 {
     synapse_core::EMBEDDING_DIM as u32
@@ -289,7 +303,35 @@ impl From<LlmSettings> for synapse_core::LlmConfig {
             fuel_token: s.fuel_token,
             prompts_dir: s.prompts_dir,
             today: s.today,
+            // The on-device backend (SYN-155) can't live in a plain Record; it
+            // is set once on the Brain and injected by `Brain::llm_config`.
+            local: None,
         }
+    }
+}
+
+/// SYN-155 — the host's on-device LLM (LiteRT/Gemma), implemented in Kotlin/Swift
+/// and passed into the core as a foreign object. The mobile app owns the runtime;
+/// the core calls `generate` synchronously on its worker thread when the chosen
+/// provider is `local`.
+#[uniffi::export(with_foreign)]
+pub trait LocalLlmCallback: Send + Sync {
+    fn generate(&self, system: String, user: String, max_tokens: u32)
+        -> Result<String, CoreError>;
+}
+
+/// Bridges the UniFFI foreign trait to the core's plain `LocalLlm` trait, so the
+/// core stays free of any UniFFI dependency.
+struct ForeignLocalLlm(Arc<dyn LocalLlmCallback>);
+
+impl synapse_core::LocalLlm for ForeignLocalLlm {
+    fn generate(
+        &self,
+        system: String,
+        user: String,
+        max_tokens: u32,
+    ) -> Result<String, synapse_core::CoreError> {
+        self.0.generate(system, user, max_tokens).map_err(Into::into)
     }
 }
 
@@ -508,6 +550,28 @@ fn key32(bytes: &[u8], what: &str) -> Result<[u8; 32], CoreError> {
 #[derive(uniffi::Object)]
 pub struct Brain {
     inner: synapse_core::Brain,
+    /// SYN-155 — the on-device backend, set once by the host after `open`. Read
+    /// on every LLM call and injected into the LlmConfig when provider=local.
+    local_llm: std::sync::RwLock<Option<Arc<dyn LocalLlmCallback>>>,
+}
+
+impl Brain {
+    /// LlmSettings → LlmConfig with the on-device backend injected (SYN-155), so
+    /// a `provider="local"` cycle call reaches the host runtime.
+    fn llm_config(&self, s: LlmSettings) -> synapse_core::LlmConfig {
+        let mut config: synapse_core::LlmConfig = s.into();
+        config.local = self.local_backend();
+        config
+    }
+
+    /// The registered on-device backend, wrapped for the core (None if unset).
+    fn local_backend(&self) -> Option<Arc<dyn synapse_core::LocalLlm>> {
+        self.local_llm
+            .read()
+            .unwrap()
+            .clone()
+            .map(|cb| Arc::new(ForeignLocalLlm(cb)) as Arc<dyn synapse_core::LocalLlm>)
+    }
 }
 
 #[uniffi::export]
@@ -515,7 +579,16 @@ impl Brain {
     #[uniffi::constructor]
     pub fn open(db_path: String, model_dir: Option<String>) -> Result<Arc<Self>, CoreError> {
         let inner = synapse_core::Brain::open(&db_path, model_dir.as_deref())?;
-        Ok(Arc::new(Self { inner }))
+        Ok(Arc::new(Self {
+            inner,
+            local_llm: std::sync::RwLock::new(None),
+        }))
+    }
+
+    /// SYN-155 — register (or clear) the host's on-device LLM. Once set, any
+    /// cycle call whose LlmSettings selects `provider="local"` runs on-device.
+    pub fn set_local_llm(&self, backend: Option<Arc<dyn LocalLlmCallback>>) {
+        *self.local_llm.write().unwrap() = backend;
     }
 
     /// Route one capture; returns the RouteReport as JSON.
@@ -566,7 +639,7 @@ impl Brain {
         touched_ids: Vec<String>,
         config: LlmSettings,
     ) -> Result<String, CoreError> {
-        let ids = self.inner.resummarize(&touched_ids, &config.into())?;
+        let ids = self.inner.resummarize(&touched_ids, &self.llm_config(config))?;
         Ok(serde_json::Value::from(ids).to_string())
     }
 
@@ -585,7 +658,7 @@ impl Brain {
             &project_name,
             &new_entry_content,
             new_entry_count,
-            &config.into(),
+            &self.llm_config(config),
         )?)
     }
 
@@ -604,7 +677,7 @@ impl Brain {
     ) -> Result<String, CoreError> {
         let week: serde_json::Value = serde_json::from_str(&week_json)
             .map_err(|e| CoreError::Storage { msg: e.to_string() })?;
-        Ok(self.inner.summarize_digest(&week, &config.into())?)
+        Ok(self.inner.summarize_digest(&week, &self.llm_config(config))?)
     }
 
     /// SYN-23 — store the digest note (idempotent per ISO week) + its vector,
@@ -629,7 +702,7 @@ impl Brain {
         capture_id: Option<String>,
         config: Option<LlmSettings>,
     ) -> Result<String, CoreError> {
-        let cfg: Option<synapse_core::LlmConfig> = config.map(Into::into);
+        let cfg: Option<synapse_core::LlmConfig> = config.map(|c| self.llm_config(c));
         let ids = self
             .inner
             .process_capture_resources(&content, capture_id.as_deref(), cfg.as_ref())?;
@@ -666,6 +739,8 @@ impl Brain {
             fuel_token,
             prompts_dir,
             today,
+            // SYN-155 — on-device classify uses the registered backend (if any).
+            local: self.local_backend(),
         };
         Ok(self
             .inner
