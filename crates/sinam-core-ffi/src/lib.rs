@@ -1,4 +1,4 @@
-//! UniFFI surface of synapse-core, consumed by Kotlin (Android) and Swift (iOS).
+//! UniFFI surface of sinam-core, consumed by Kotlin (Android) and Swift (iOS).
 
 use std::sync::Arc;
 
@@ -18,49 +18,49 @@ pub enum CoreError {
     LlmContent { msg: String },
 }
 
-impl From<synapse_core::CoreError> for CoreError {
-    fn from(e: synapse_core::CoreError) -> Self {
+impl From<sinam_core::CoreError> for CoreError {
+    fn from(e: sinam_core::CoreError) -> Self {
         match e {
-            synapse_core::CoreError::ModelLoad(msg) => CoreError::ModelLoad { msg },
-            synapse_core::CoreError::Embedding(msg) => CoreError::Embedding { msg },
-            synapse_core::CoreError::Storage(msg) => CoreError::Storage { msg },
-            synapse_core::CoreError::LlmHttp(msg) => CoreError::LlmHttp { msg },
-            synapse_core::CoreError::LlmContent(msg) => CoreError::LlmContent { msg },
+            sinam_core::CoreError::ModelLoad(msg) => CoreError::ModelLoad { msg },
+            sinam_core::CoreError::Embedding(msg) => CoreError::Embedding { msg },
+            sinam_core::CoreError::Storage(msg) => CoreError::Storage { msg },
+            sinam_core::CoreError::LlmHttp(msg) => CoreError::LlmHttp { msg },
+            sinam_core::CoreError::LlmContent(msg) => CoreError::LlmContent { msg },
         }
     }
 }
 
 /// Reverse conversion (SYN-155): a foreign on-device backend raises the FFI
-/// `CoreError`; the core's `LocalLlm` trait speaks `synapse_core::CoreError`.
-impl From<CoreError> for synapse_core::CoreError {
+/// `CoreError`; the core's `LocalLlm` trait speaks `sinam_core::CoreError`.
+impl From<CoreError> for sinam_core::CoreError {
     fn from(e: CoreError) -> Self {
         match e {
-            CoreError::ModelLoad { msg } => synapse_core::CoreError::ModelLoad(msg),
-            CoreError::Embedding { msg } => synapse_core::CoreError::Embedding(msg),
-            CoreError::Storage { msg } => synapse_core::CoreError::Storage(msg),
-            CoreError::LlmHttp { msg } => synapse_core::CoreError::LlmHttp(msg),
-            CoreError::LlmContent { msg } => synapse_core::CoreError::LlmContent(msg),
+            CoreError::ModelLoad { msg } => sinam_core::CoreError::ModelLoad(msg),
+            CoreError::Embedding { msg } => sinam_core::CoreError::Embedding(msg),
+            CoreError::Storage { msg } => sinam_core::CoreError::Storage(msg),
+            CoreError::LlmHttp { msg } => sinam_core::CoreError::LlmHttp(msg),
+            CoreError::LlmContent { msg } => sinam_core::CoreError::LlmContent(msg),
         }
     }
 }
 
 #[uniffi::export]
 pub fn embedding_dim() -> u32 {
-    synapse_core::EMBEDDING_DIM as u32
+    sinam_core::EMBEDDING_DIM as u32
 }
 
 /// Text embedder. `model_dir` must contain the bundled ONNX + tokenizer files
 /// (same files as the desktop backend, shipped as app assets).
 #[derive(uniffi::Object)]
 pub struct Embedder {
-    inner: synapse_core::Embedder,
+    inner: sinam_core::Embedder,
 }
 
 #[uniffi::export]
 impl Embedder {
     #[uniffi::constructor]
     pub fn new(model_dir: String) -> Result<Arc<Self>, CoreError> {
-        let inner = synapse_core::Embedder::new(&model_dir)?;
+        let inner = sinam_core::Embedder::new(&model_dir)?;
         Ok(Arc::new(Self { inner }))
     }
 
@@ -106,7 +106,7 @@ pub struct ResourceHit {
 /// `Embedder.embed` yields once packed little-endian).
 #[derive(uniffi::Object)]
 pub struct Storage {
-    inner: synapse_core::Storage,
+    inner: sinam_core::Storage,
 }
 
 #[uniffi::export]
@@ -114,7 +114,7 @@ impl Storage {
     /// Open (creating if needed) the database and init/migrate the schema.
     #[uniffi::constructor]
     pub fn open(db_path: String) -> Result<Arc<Self>, CoreError> {
-        let inner = synapse_core::Storage::open(&db_path)?;
+        let inner = sinam_core::Storage::open(&db_path)?;
         Ok(Arc::new(Self { inner }))
     }
 
@@ -243,7 +243,7 @@ pub enum SqlValue {
     Blob { value: Vec<u8> },
 }
 
-impl From<SqlValue> for synapse_core::SqlValue {
+impl From<SqlValue> for sinam_core::SqlValue {
     fn from(v: SqlValue) -> Self {
         match v {
             SqlValue::Null => Self::Null,
@@ -255,14 +255,14 @@ impl From<SqlValue> for synapse_core::SqlValue {
     }
 }
 
-impl From<synapse_core::SqlValue> for SqlValue {
-    fn from(v: synapse_core::SqlValue) -> Self {
+impl From<sinam_core::SqlValue> for SqlValue {
+    fn from(v: sinam_core::SqlValue) -> Self {
         match v {
-            synapse_core::SqlValue::Null => Self::Null,
-            synapse_core::SqlValue::Integer(value) => Self::Integer { value },
-            synapse_core::SqlValue::Real(value) => Self::Real { value },
-            synapse_core::SqlValue::Text(value) => Self::Text { value },
-            synapse_core::SqlValue::Blob(value) => Self::Blob { value },
+            sinam_core::SqlValue::Null => Self::Null,
+            sinam_core::SqlValue::Integer(value) => Self::Integer { value },
+            sinam_core::SqlValue::Real(value) => Self::Real { value },
+            sinam_core::SqlValue::Text(value) => Self::Text { value },
+            sinam_core::SqlValue::Blob(value) => Self::Blob { value },
         }
     }
 }
@@ -293,12 +293,12 @@ pub struct LlmSettings {
     pub provider: Option<String>,
 }
 
-impl From<LlmSettings> for synapse_core::LlmConfig {
+impl From<LlmSettings> for sinam_core::LlmConfig {
     fn from(s: LlmSettings) -> Self {
-        synapse_core::LlmConfig {
+        sinam_core::LlmConfig {
             model: s.model,
             api_key: s.api_key,
-            provider: synapse_core::LlmProvider::parse(s.provider.as_deref()),
+            provider: sinam_core::LlmProvider::parse(s.provider.as_deref()),
             base_url: s.base_url,
             fuel_token: s.fuel_token,
             prompts_dir: s.prompts_dir,
@@ -324,13 +324,13 @@ pub trait LocalLlmCallback: Send + Sync {
 /// core stays free of any UniFFI dependency.
 struct ForeignLocalLlm(Arc<dyn LocalLlmCallback>);
 
-impl synapse_core::LocalLlm for ForeignLocalLlm {
+impl sinam_core::LocalLlm for ForeignLocalLlm {
     fn generate(
         &self,
         system: String,
         user: String,
         max_tokens: u32,
-    ) -> Result<String, synapse_core::CoreError> {
+    ) -> Result<String, sinam_core::CoreError> {
         self.0.generate(system, user, max_tokens).map_err(Into::into)
     }
 }
@@ -339,7 +339,7 @@ impl synapse_core::LocalLlm for ForeignLocalLlm {
 /// process (mixing two SQLite libraries on one file corrupts it).
 #[derive(uniffi::Object)]
 pub struct SqlConnection {
-    inner: synapse_core::SqlConnection,
+    inner: sinam_core::SqlConnection,
 }
 
 #[uniffi::export]
@@ -347,12 +347,12 @@ impl SqlConnection {
     /// Open a SQL connection. No schema init — that's `Storage`'s job.
     #[uniffi::constructor]
     pub fn open(db_path: String) -> Result<Arc<Self>, CoreError> {
-        let inner = synapse_core::connect(&db_path)?;
+        let inner = sinam_core::connect(&db_path)?;
         Ok(Arc::new(Self { inner }))
     }
 
     pub fn execute(&self, sql: String, params: Vec<SqlValue>) -> Result<SqlResult, CoreError> {
-        let values: Vec<synapse_core::SqlValue> = params.into_iter().map(Into::into).collect();
+        let values: Vec<sinam_core::SqlValue> = params.into_iter().map(Into::into).collect();
         let result = self.inner.execute(&sql, &values)?;
         Ok(SqlResult {
             columns: result.columns,
@@ -468,7 +468,7 @@ pub struct PairingAccept {
 /// between showing the offer and receiving the scanner's returned key.
 #[derive(uniffi::Object)]
 pub struct PairingSession {
-    inner: synapse_core::PairingSession,
+    inner: sinam_core::PairingSession,
     qr: String,
 }
 
@@ -478,7 +478,7 @@ impl PairingSession {
     /// Render `qr()` as a QR code.
     #[uniffi::constructor]
     pub fn offer(addrs: Vec<String>) -> Result<Arc<Self>, CoreError> {
-        let (inner, offer) = synapse_core::PairingSession::offer(addrs)?;
+        let (inner, offer) = sinam_core::PairingSession::offer(addrs)?;
         let qr = offer.encode();
         Ok(Arc::new(Self { inner, qr }))
     }
@@ -503,8 +503,8 @@ impl PairingSession {
 /// Scanner side (SYN-128): decode the QR and derive the channel key.
 #[uniffi::export]
 pub fn pairing_accept(qr: String) -> Result<PairingAccept, CoreError> {
-    let offer = synapse_core::PairingOffer::decode(&qr)?;
-    let (accept_pub, channel_key) = synapse_core::pairing_accept(&offer)?;
+    let offer = sinam_core::PairingOffer::decode(&qr)?;
+    let (accept_pub, channel_key) = sinam_core::pairing_accept(&offer)?;
     Ok(PairingAccept {
         accept_pub: accept_pub.to_vec(),
         channel_key: channel_key.to_vec(),
@@ -516,7 +516,7 @@ pub fn pairing_accept(qr: String) -> Result<PairingAccept, CoreError> {
 /// call back) — decoded without completing the exchange.
 #[uniffi::export]
 pub fn pairing_offer_addrs(qr: String) -> Result<Vec<String>, CoreError> {
-    Ok(synapse_core::PairingOffer::decode(&qr)?.addrs)
+    Ok(sinam_core::PairingOffer::decode(&qr)?.addrs)
 }
 
 /// AEAD-seal a payload under the channel key (SYN-128). Returns base64.
@@ -530,7 +530,7 @@ pub fn pairing_seal(
     let ck = key32(&channel_key, "channel_key")?;
     let op = key32(&offer_pub, "offer_pub")?;
     let ap = key32(&accept_pub, "accept_pub")?;
-    Ok(synapse_core::pairing_seal(&ck, &op, &ap, &plaintext)?)
+    Ok(sinam_core::pairing_seal(&ck, &op, &ap, &plaintext)?)
 }
 
 /// Open what `pairing_seal` produced (SYN-128) → the plaintext bytes.
@@ -544,7 +544,7 @@ pub fn pairing_open(
     let ck = key32(&channel_key, "channel_key")?;
     let op = key32(&offer_pub, "offer_pub")?;
     let ap = key32(&accept_pub, "accept_pub")?;
-    Ok(synapse_core::pairing_open(&ck, &op, &ap, &sealed_b64)?)
+    Ok(sinam_core::pairing_open(&ck, &op, &ap, &sealed_b64)?)
 }
 
 fn key32(bytes: &[u8], what: &str) -> Result<[u8; 32], CoreError> {
@@ -557,7 +557,7 @@ fn key32(bytes: &[u8], what: &str) -> Result<[u8; 32], CoreError> {
 /// orchestration. JSON strings across the boundary, same shapes as PyO3.
 #[derive(uniffi::Object)]
 pub struct Brain {
-    inner: synapse_core::Brain,
+    inner: sinam_core::Brain,
     /// SYN-155 — the on-device backend, set once by the host after `open`. Read
     /// on every LLM call and injected into the LlmConfig when provider=local.
     local_llm: std::sync::RwLock<Option<Arc<dyn LocalLlmCallback>>>,
@@ -566,19 +566,19 @@ pub struct Brain {
 impl Brain {
     /// LlmSettings → LlmConfig with the on-device backend injected (SYN-155), so
     /// a `provider="local"` cycle call reaches the host runtime.
-    fn llm_config(&self, s: LlmSettings) -> synapse_core::LlmConfig {
-        let mut config: synapse_core::LlmConfig = s.into();
+    fn llm_config(&self, s: LlmSettings) -> sinam_core::LlmConfig {
+        let mut config: sinam_core::LlmConfig = s.into();
         config.local = self.local_backend();
         config
     }
 
     /// The registered on-device backend, wrapped for the core (None if unset).
-    fn local_backend(&self) -> Option<Arc<dyn synapse_core::LocalLlm>> {
+    fn local_backend(&self) -> Option<Arc<dyn sinam_core::LocalLlm>> {
         self.local_llm
             .read()
             .unwrap()
             .clone()
-            .map(|cb| Arc::new(ForeignLocalLlm(cb)) as Arc<dyn synapse_core::LocalLlm>)
+            .map(|cb| Arc::new(ForeignLocalLlm(cb)) as Arc<dyn sinam_core::LocalLlm>)
     }
 }
 
@@ -586,7 +586,7 @@ impl Brain {
 impl Brain {
     #[uniffi::constructor]
     pub fn open(db_path: String, model_dir: Option<String>) -> Result<Arc<Self>, CoreError> {
-        let inner = synapse_core::Brain::open(&db_path, model_dir.as_deref())?;
+        let inner = sinam_core::Brain::open(&db_path, model_dir.as_deref())?;
         Ok(Arc::new(Self {
             inner,
             local_llm: std::sync::RwLock::new(None),
@@ -614,14 +614,14 @@ impl Brain {
             .map_err(|e| CoreError::Storage { msg: e.to_string() })?;
         let classified: serde_json::Value = serde_json::from_str(&classified_json)
             .map_err(|e| CoreError::Storage { msg: e.to_string() })?;
-        let ctx = synapse_core::RouteContext {
+        let ctx = sinam_core::RouteContext {
             now,
             today,
             intentions_cutoff,
             now_sql,
         };
         let report = self.inner.route_capture(&entry, &classified, &ctx)?;
-        Ok(synapse_core::Brain::report_to_json(&report).to_string())
+        Ok(sinam_core::Brain::report_to_json(&report).to_string())
     }
 
     /// Embed with the Brain's already-loaded model (no second Embedder):
@@ -710,7 +710,7 @@ impl Brain {
         capture_id: Option<String>,
         config: Option<LlmSettings>,
     ) -> Result<String, CoreError> {
-        let cfg: Option<synapse_core::LlmConfig> = config.map(|c| self.llm_config(c));
+        let cfg: Option<sinam_core::LlmConfig> = config.map(|c| self.llm_config(c));
         let ids = self
             .inner
             .process_capture_resources(&content, capture_id.as_deref(), cfg.as_ref())?;
@@ -739,10 +739,10 @@ impl Brain {
         // Anthropic behaviour (what iOS passes today).
         provider: Option<String>,
     ) -> Result<String, CoreError> {
-        let config = synapse_core::LlmConfig {
+        let config = sinam_core::LlmConfig {
             model,
             api_key,
-            provider: synapse_core::LlmProvider::parse(provider.as_deref()),
+            provider: sinam_core::LlmProvider::parse(provider.as_deref()),
             base_url,
             fuel_token,
             prompts_dir,

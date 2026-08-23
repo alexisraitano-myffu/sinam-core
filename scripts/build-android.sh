@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Build the Android core artifacts consumed by the app:
-#   bindings/android/jniLibs/arm64-v8a/libsynapse_core_ffi.so  (ort-dynamic)
-#   bindings/android/kotlin/uniffi/synapse_core_ffi/synapse_core_ffi.kt
+#   bindings/android/jniLibs/arm64-v8a/libsinam_core_ffi.so  (ort-dynamic)
+#   bindings/android/kotlin/uniffi/sinam_core_ffi/sinam_core_ffi.kt
 #
 # The app supplies libonnxruntime.so via the onnxruntime-android AAR; the core
 # is built with --features ort-dynamic so ort dlopens it by soname at runtime.
@@ -14,15 +14,15 @@ OUT="${1:-bindings/android}"
 TARGETS=(arm64-v8a)
 
 for t in "${TARGETS[@]}"; do
-    cargo ndk -t "$t" build -p synapse-core-ffi \
+    cargo ndk -t "$t" build -p sinam-core-ffi \
         --no-default-features --features ort-dynamic --release
 done
 
 # The Kotlin binding is generated from a HOST build of the same crate: the
 # UniFFI surface is feature-independent, so host metadata == Android metadata.
-cargo build -p synapse-core-ffi
-cargo run -p synapse-core-ffi --bin uniffi-bindgen -- generate \
-    --library target/debug/libsynapse_core_ffi.dylib \
+cargo build -p sinam-core-ffi
+cargo run -p sinam-core-ffi --bin uniffi-bindgen -- generate \
+    --library target/debug/libsinam_core_ffi.dylib \
     --language kotlin --out-dir "$OUT/kotlin"
 
 # The Rust cdylib links against libc++_shared (tokenizers' C++ deps): the
@@ -38,7 +38,7 @@ for t in "${TARGETS[@]}"; do
         *) echo "unknown target $t" >&2; exit 1 ;;
     esac
     mkdir -p "$OUT/jniLibs/$t"
-    cp "target/$rust_target/release/libsynapse_core_ffi.so" "$OUT/jniLibs/$t/"
+    cp "target/$rust_target/release/libsinam_core_ffi.so" "$OUT/jniLibs/$t/"
     cp "$SYSROOT_LIBS/$rust_target/libc++_shared.so" "$OUT/jniLibs/$t/"
 done
 

@@ -1,16 +1,16 @@
 [package]
-name = "synapse-core-py"
+name = "sinam-core-py"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "PyO3 binding of synapse-core for the Synapse desktop host (FastAPI backend)."
+description = "PyO3 binding of sinam-core for the sinam desktop host (FastAPI backend)."
 
 [lib]
-name = "synapse_core_py"
+name = "sinam_core_py"
 crate-type = ["cdylib"]
 
 [dependencies]
 serde_json = { version = "1", features = ["preserve_order"] }
-synapse-core = { workspace = true }
+sinam-core = { workspace = true }
 pyo3 = { version = "0.29", features = ["extension-module", "abi3-py311"] }

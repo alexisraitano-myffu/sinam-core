@@ -241,7 +241,7 @@ pub fn extract_page(html: &str) -> PageText {
 pub fn fetch_and_extract(url: &str, timeout: Duration) -> Option<PageText> {
     let resp = ureq::get(url)
         .timeout(timeout)
-        .set("User-Agent", "SynapseBot/1.0 (personal memory)")
+        .set("User-Agent", "sinamBot/1.0 (personal memory)")
         .call()
         .ok()?;
     let content_type = resp.header("content-type").unwrap_or("text/html").to_string();

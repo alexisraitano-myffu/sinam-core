@@ -6,7 +6,7 @@
 //! Usage:
 //!   golden_replay <corpus.json> <out.db> <model_dir> <today YYYY-MM-DD>
 
-use synapse_core::{Brain, RouteContext, SqlValue};
+use sinam_core::{Brain, RouteContext, SqlValue};
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -20,7 +20,7 @@ fn main() {
             .expect("parse corpus");
 
     let brain = Brain::open(out_db, Some(model_dir)).expect("open brain");
-    let sql = synapse_core::connect(out_db).expect("sql gateway");
+    let sql = sinam_core::connect(out_db).expect("sql gateway");
 
     // Same frozen clock as the Python reference replay.
     let ctx = RouteContext {

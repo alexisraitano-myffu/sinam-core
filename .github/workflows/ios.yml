@@ -1,5 +1,5 @@
 # T4 (SYN-113) phase 1 — the iOS toolchain wall, entirely in CI (no local
-# Xcode). Produces SynapseCore.xcframework + UniFFI Swift bindings, and proves
+# Xcode). Produces SinamCore.xcframework + UniFFI Swift bindings, and proves
 # embedding parity by running the same probe on macOS and on an iOS simulator.
 #
 # ONNX Runtime on iOS: the official CocoaPods archive (onnxruntime-c) ships a
@@ -56,24 +56,24 @@ jobs:
 
       - name: Build FFI staticlib (device)
         run: |
-          cargo build -p synapse-core-ffi --release --no-default-features \
+          cargo build -p sinam-core-ffi --release --no-default-features \
             --target aarch64-apple-ios
 
       - name: Build FFI staticlib (simulator)
         run: |
-          cargo build -p synapse-core-ffi --release --no-default-features \
+          cargo build -p sinam-core-ffi --release --no-default-features \
             --target aarch64-apple-ios-sim
 
       - name: Generate Swift bindings
         run: |
           set -euo pipefail
-          cargo build -p synapse-core-ffi --release
-          cargo run -p synapse-core-ffi --release --bin uniffi-bindgen -- \
-            generate --library target/release/libsynapse_core_ffi.dylib \
+          cargo build -p sinam-core-ffi --release
+          cargo run -p sinam-core-ffi --release --bin uniffi-bindgen -- \
+            generate --library target/release/libsinam_core_ffi.dylib \
             --language swift --out-dir target/swift
           ls -la target/swift
 
-      - name: Assemble SynapseCore.xcframework
+      - name: Assemble SinamCore.xcframework
         run: |
           set -euo pipefail
           # `xcodebuild -create-xcframework` n'écrase pas : si la sortie existe
@@ -82,16 +82,16 @@ jobs:
           # Rust restaure `target/` — d'où un échec à CHAQUE push, et zéro
           # artefact iOS produit depuis des semaines. Repartir d'une sortie
           # propre, quelle que soit la raison de sa présence.
-          rm -rf target/SynapseCore.xcframework target/xc-headers
+          rm -rf target/SinamCore.xcframework target/xc-headers
           mkdir -p target/xc-headers
           cp target/swift/*FFI.h target/xc-headers/
           cp target/swift/*FFI.modulemap target/xc-headers/module.modulemap
           xcodebuild -create-xcframework \
-            -library target/aarch64-apple-ios/release/libsynapse_core_ffi.a \
+            -library target/aarch64-apple-ios/release/libsinam_core_ffi.a \
               -headers target/xc-headers \
-            -library target/aarch64-apple-ios-sim/release/libsynapse_core_ffi.a \
+            -library target/aarch64-apple-ios-sim/release/libsinam_core_ffi.a \
               -headers target/xc-headers \
-            -output target/SynapseCore.xcframework
+            -output target/SinamCore.xcframework
 
       - name: Cache embedding model
         uses: actions/cache@v4
@@ -114,8 +114,8 @@ jobs:
       - name: Build embed_smoke (host + simulator)
         run: |
           set -euo pipefail
-          cargo build -p synapse-core --release --bin embed_smoke
-          cargo build -p synapse-core --release --bin embed_smoke \
+          cargo build -p sinam-core --release --bin embed_smoke
+          cargo build -p sinam-core --release --bin embed_smoke \
             --no-default-features --target aarch64-apple-ios-sim
 
       - name: Embedding parity macOS vs iOS simulator
@@ -134,9 +134,9 @@ jobs:
       - name: Upload xcframework + Swift bindings
         uses: actions/upload-artifact@v4
         with:
-          name: SynapseCore-ios
+          name: SinamCore-ios
           path: |
-            target/SynapseCore.xcframework
+            target/SinamCore.xcframework
             target/swift
           # Ce workflow tourne à chaque push sur main : avec la rétention par défaut
           # (90 j), 39 xcframeworks quasi identiques (~90 Mo pièce) dormaient encore
@@ -152,7 +152,7 @@ jobs:
           # PEP 668: the runner's Homebrew Python refuses bare pip installs.
           python3 -m venv /tmp/maturin-venv
           /tmp/maturin-venv/bin/pip install --quiet maturin
-          /tmp/maturin-venv/bin/maturin build --release -m crates/synapse-core-py/Cargo.toml
+          /tmp/maturin-venv/bin/maturin build --release -m crates/sinam-core-py/Cargo.toml
           ls target/wheels
 
       # Rolling release consumed by the (private) app repo's iOS CI: a stable
@@ -163,13 +163,13 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          (cd target && zip -qry SynapseCore.xcframework.zip SynapseCore.xcframework)
-          (cd target/swift && zip -qy ../SynapseCore-swift-bindings.zip *)
+          (cd target && zip -qry SinamCore.xcframework.zip SinamCore.xcframework)
+          (cd target/swift && zip -qy ../SinamCore-swift-bindings.zip *)
           NOTES="Build $(git rev-parse --short HEAD) — onnxruntime iOS $ORT_IOS_VERSION (l'app doit lier onnxruntime.xcframework du pod onnxruntime-c à côté)."
-          gh release create core-ios --title "SynapseCore iOS (rolling)" \
+          gh release create core-ios --title "SinamCore iOS (rolling)" \
             --notes "$NOTES" --latest=false 2>/dev/null || \
             gh release edit core-ios --notes "$NOTES"
           gh release upload core-ios --clobber \
-            target/SynapseCore.xcframework.zip \
-            target/SynapseCore-swift-bindings.zip \
+            target/SinamCore.xcframework.zip \
+            target/SinamCore-swift-bindings.zip \
             target/wheels/*.whl

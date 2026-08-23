@@ -1,10 +1,10 @@
 [package]
-name = "synapse-core"
+name = "sinam-core"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Synapse shared core: embeddings, storage, routing, decay. One compiled brain for desktop and mobile."
+description = "sinam shared core: embeddings, storage, routing, decay. One compiled brain for desktop and mobile."
 
 [features]
 # Desktop hosts (macOS/Windows): ort downloads a prebuilt onnxruntime at build time.

@@ -1,5 +1,5 @@
 # Windows build of the core: cargo tests (with the real model, so the
-# ort-download runtime path is exercised end-to-end) + the synapse_core wheel
+# ort-download runtime path is exercised end-to-end) + the sinam_core wheel
 # as artifact. The app repo's Windows distribution workflow installs this
 # wheel into the PyInstaller backend bundle instead of building it locally.
 name: windows-core
@@ -59,16 +59,16 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Build synapse_core wheel
+      - name: Build sinam_core wheel
         shell: bash
         run: |
           pip install maturin
-          maturin build --release -m crates/synapse-core-py/Cargo.toml
+          maturin build --release -m crates/sinam-core-py/Cargo.toml
 
       - name: Upload wheel
         uses: actions/upload-artifact@v4
         with:
-          name: synapse-core-wheel-windows
+          name: sinam-core-wheel-windows
           path: target/wheels/*.whl
           if-no-files-found: error
           # Cf. ios.yml : rétention par défaut = 90 j et un push sur main par build.
@@ -84,8 +84,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          NOTES="Wheel Windows synapse_core — build $(git rev-parse --short HEAD)"
-          gh release create core-windows --title "SynapseCore Windows (rolling)" \
+          NOTES="Wheel Windows sinam_core — build $(git rev-parse --short HEAD)"
+          gh release create core-windows --title "SinamCore Windows (rolling)" \
             --notes "$NOTES" --latest=false 2>/dev/null || \
             gh release edit core-windows --notes "$NOTES"
           gh release upload core-windows --clobber target/wheels/*.whl

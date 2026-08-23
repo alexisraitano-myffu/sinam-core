@@ -1,5 +1,5 @@
 """
-Vector parity harness: Rust core (synapse_core, PyO3) vs Python fastembed.
+Vector parity harness: Rust core (sinam_core, PyO3) vs Python fastembed.
 
 Both sides must load the SAME model files (qdrant paraphrase-multilingual-
 MiniLM-L12-v2-onnx-Q) and produce the same L2-normalized 384-d vector for the
@@ -8,7 +8,7 @@ same text, within epsilon. This is the T0 acceptance gate (SYN-109).
 Usage (from the synapse backend venv, which has fastembed):
     python tools/parity_check.py --model-dir ~/.synapse/models/paraphrase-multilingual-MiniLM-L12-v2-onnx-Q
 
-Requires the synapse_core wheel to be installed in the same venv
+Requires the sinam_core wheel to be installed in the same venv
 (maturin develop / pip install the built wheel).
 """
 
@@ -56,12 +56,12 @@ def main():
     args = parser.parse_args()
 
     from fastembed import TextEmbedding
-    import synapse_core
+    import sinam_core
 
     print(f"python ref : fastembed TextEmbedding({MODEL_NAME!r})")
     py_model = TextEmbedding(MODEL_NAME)
-    print(f"rust core  : synapse_core.Embedder({args.model_dir!r})")
-    rs_model = synapse_core.Embedder(args.model_dir)
+    print(f"rust core  : sinam_core.Embedder({args.model_dir!r})")
+    rs_model = sinam_core.Embedder(args.model_dir)
 
     failures = 0
     worst_diff, worst_cos = 0.0, 1.0

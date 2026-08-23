@@ -1,4 +1,4 @@
-//! synapse-core: the single compiled brain shared by the Synapse desktop host
+//! sinam-core: the single compiled brain shared by the sinam desktop host
 //! (via PyO3) and the mobile apps (via UniFFI).
 //!
 //! Current scope:

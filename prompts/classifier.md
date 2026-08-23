@@ -210,7 +210,7 @@ level, build/renovate Y, organize a trip). A TASK is a single bounded action ("c
 project_entries rules:
 - If the capture is explicitly tied to ONE OR MORE projects (declared or named), produce ONE entry per
   project in project_entries.
-- One capture may mention several projects ("I made progress on Synapse and Atlas today") → 2 items,
+- One capture may mention several projects ("I made progress on sinam and Atlas today") → 2 items,
   one per project, each with its own `content` covering only the excerpt relevant to that project.
 - "new project: X" → is_new=true, project_canonical=X (always in the array, even for a single item).
 - The list of existing projects is provided in context below — prefer an existing name over a spelling

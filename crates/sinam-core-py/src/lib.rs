@@ -1,9 +1,9 @@
 use pyo3::exceptions::{PyRuntimeError, PyTypeError};
 use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyBytes};
-use synapse_core::SqlValue;
+use sinam_core::SqlValue;
 
-fn core_err(e: synapse_core::CoreError) -> PyErr {
+fn core_err(e: sinam_core::CoreError) -> PyErr {
     PyRuntimeError::new_err(e.to_string())
 }
 
@@ -45,12 +45,12 @@ fn from_sql_value<'py>(py: Python<'py>, v: SqlValue) -> PyResult<Bound<'py, PyAn
 /// Text embedder backed by the shared Rust core.
 ///
 /// Python usage:
-///     from synapse_core import Embedder
+///     from sinam_core import Embedder
 ///     e = Embedder("/path/to/model-dir")
 ///     vec = e.embed("some text")   # list[float], 384-d, L2-normalized
 #[pyclass]
 struct Embedder {
-    inner: std::sync::Arc<synapse_core::Embedder>,
+    inner: std::sync::Arc<sinam_core::Embedder>,
 }
 
 #[pymethods]
@@ -58,7 +58,7 @@ impl Embedder {
     #[new]
     fn new(py: Python<'_>, model_dir: &str) -> PyResult<Self> {
         let inner = py
-            .detach(|| synapse_core::Embedder::new(model_dir))
+            .detach(|| sinam_core::Embedder::new(model_dir))
             .map_err(core_err)?;
         Ok(Self {
             inner: std::sync::Arc::new(inner),
@@ -85,13 +85,13 @@ impl Embedder {
 /// the Python callers wrap them in their historical dict shapes.
 ///
 /// Python usage:
-///     from synapse_core import Storage
+///     from sinam_core import Storage
 ///     s = Storage(str(DB_PATH))            # opens + init/migrate schema
 ///     s.upsert_note_vector(note_id, vec)
 ///     hits = s.search_entities(vec, limit=5, min_score=0.85)
 #[pyclass]
 struct Storage {
-    inner: synapse_core::Storage,
+    inner: sinam_core::Storage,
 }
 
 #[pymethods]
@@ -99,7 +99,7 @@ impl Storage {
     #[new]
     fn new(py: Python<'_>, db_path: &str) -> PyResult<Self> {
         let inner = py
-            .detach(|| synapse_core::Storage::open(db_path))
+            .detach(|| sinam_core::Storage::open(db_path))
             .map_err(core_err)?;
         Ok(Self { inner })
     }
@@ -240,11 +240,11 @@ impl Storage {
 /// cursor/transaction surface the backend historically used.
 #[pyclass]
 struct SqlConnection {
-    inner: Option<synapse_core::SqlConnection>,
+    inner: Option<sinam_core::SqlConnection>,
 }
 
 impl SqlConnection {
-    fn get(&self) -> PyResult<&synapse_core::SqlConnection> {
+    fn get(&self) -> PyResult<&sinam_core::SqlConnection> {
         self.inner
             .as_ref()
             .ok_or_else(|| PyRuntimeError::new_err("connection is closed"))
@@ -427,18 +427,18 @@ impl SqlConnection {
 #[pyfunction]
 fn connect(py: Python<'_>, db_path: &str) -> PyResult<SqlConnection> {
     let inner = py
-        .detach(|| synapse_core::connect(db_path))
+        .detach(|| sinam_core::connect(db_path))
         .map_err(core_err)?;
     Ok(SqlConnection { inner: Some(inner) })
 }
 
-fn brain_err(e: synapse_core::CoreError) -> PyErr {
+fn brain_err(e: sinam_core::CoreError) -> PyErr {
     use pyo3::exceptions::{PyConnectionError, PyValueError};
     match e {
         // Host policy: HTTP/network aborts the run (like anthropic.APIError),
         // a content error only fails the one entry.
-        synapse_core::CoreError::LlmHttp(msg) => PyConnectionError::new_err(msg),
-        synapse_core::CoreError::LlmContent(msg) => PyValueError::new_err(msg),
+        sinam_core::CoreError::LlmHttp(msg) => PyConnectionError::new_err(msg),
+        sinam_core::CoreError::LlmContent(msg) => PyValueError::new_err(msg),
         other => PyRuntimeError::new_err(other.to_string()),
     }
 }
@@ -448,7 +448,7 @@ fn brain_err(e: synapse_core::CoreError) -> PyErr {
 /// polymorphic and the report is consumed as a dict anyway.
 #[pyclass]
 struct Brain {
-    inner: synapse_core::Brain,
+    inner: sinam_core::Brain,
 }
 
 #[pymethods]
@@ -466,8 +466,8 @@ impl Brain {
         let shared = embedder.map(|e| e.inner.clone());
         let inner = py
             .detach(|| match shared {
-                Some(e) => synapse_core::Brain::open_shared(db_path, Some(e)),
-                None => synapse_core::Brain::open(db_path, model_dir),
+                Some(e) => sinam_core::Brain::open_shared(db_path, Some(e)),
+                None => sinam_core::Brain::open(db_path, model_dir),
             })
             .map_err(brain_err)?;
         Ok(Self { inner })
@@ -490,7 +490,7 @@ impl Brain {
             serde_json::from_str(entry_json).map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
         let classified: serde_json::Value = serde_json::from_str(classified_json)
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-        let ctx = synapse_core::RouteContext {
+        let ctx = sinam_core::RouteContext {
             now: now.to_string(),
             today: today.to_string(),
             intentions_cutoff: intentions_cutoff.to_string(),
@@ -499,7 +499,7 @@ impl Brain {
         let report = py
             .detach(|| self.inner.route_capture(&entry, &classified, &ctx))
             .map_err(brain_err)?;
-        Ok(synapse_core::Brain::report_to_json(&report).to_string())
+        Ok(sinam_core::Brain::report_to_json(&report).to_string())
     }
 
     /// step5 — behavioral validation over the run's accumulated new facts.
@@ -528,18 +528,18 @@ impl Brain {
         half: &str,
     ) -> PyResult<String> {
         let half = match half {
-            "note" => synapse_core::ClassifyHalf::Note,
-            "graph" => synapse_core::ClassifyHalf::Graph,
+            "note" => sinam_core::ClassifyHalf::Note,
+            "graph" => sinam_core::ClassifyHalf::Graph,
             other => {
                 return Err(PyRuntimeError::new_err(format!(
                     "half inconnu : {other:?} (attendu \"note\" ou \"graph\")"
                 )))
             }
         };
-        let config = synapse_core::LlmConfig {
+        let config = sinam_core::LlmConfig {
             model: model.to_string(),
             api_key: String::new(),
-            provider: synapse_core::LlmProvider::Anthropic,
+            provider: sinam_core::LlmProvider::Anthropic,
             local: None,
             base_url: None,
             fuel_token: None,
@@ -570,12 +570,12 @@ impl Brain {
         base_url: Option<&str>,
         fuel_token: Option<&str>,
     ) -> PyResult<String> {
-        let config = synapse_core::LlmConfig {
+        let config = sinam_core::LlmConfig {
             model: model.to_string(),
             api_key: api_key.to_string(),
             // Backend Mac path is Anthropic today; SYN-152 will expose the
             // provider selector once the settings endpoint lands.
-            provider: synapse_core::LlmProvider::Anthropic,
+            provider: sinam_core::LlmProvider::Anthropic,
             local: None,
             base_url: base_url.map(String::from),
             fuel_token: fuel_token.map(String::from),
@@ -606,12 +606,12 @@ impl Brain {
         base_url: Option<&str>,
         fuel_token: Option<&str>,
     ) -> PyResult<String> {
-        let config = synapse_core::LlmConfig {
+        let config = sinam_core::LlmConfig {
             model: model.to_string(),
             api_key: api_key.to_string(),
             // Backend Mac path is Anthropic today; SYN-152 will expose the
             // provider selector once the settings endpoint lands.
-            provider: synapse_core::LlmProvider::Anthropic,
+            provider: sinam_core::LlmProvider::Anthropic,
             local: None,
             base_url: base_url.map(String::from),
             fuel_token: fuel_token.map(String::from),
@@ -643,12 +643,12 @@ impl Brain {
         base_url: Option<&str>,
         fuel_token: Option<&str>,
     ) -> PyResult<Option<String>> {
-        let config = synapse_core::LlmConfig {
+        let config = sinam_core::LlmConfig {
             model: model.to_string(),
             api_key: api_key.to_string(),
             // Backend Mac path is Anthropic today; SYN-152 will expose the
             // provider selector once the settings endpoint lands.
-            provider: synapse_core::LlmProvider::Anthropic,
+            provider: sinam_core::LlmProvider::Anthropic,
             local: None,
             base_url: base_url.map(String::from),
             fuel_token: fuel_token.map(String::from),
@@ -761,12 +761,12 @@ impl Brain {
     ) -> PyResult<String> {
         let week: serde_json::Value = serde_json::from_str(week_json)
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-        let config = synapse_core::LlmConfig {
+        let config = sinam_core::LlmConfig {
             model: model.to_string(),
             api_key: api_key.to_string(),
             // Backend Mac path is Anthropic today; SYN-152 will expose the
             // provider selector once the settings endpoint lands.
-            provider: synapse_core::LlmProvider::Anthropic,
+            provider: sinam_core::LlmProvider::Anthropic,
             local: None,
             base_url: base_url.map(String::from),
             fuel_token: fuel_token.map(String::from),
@@ -858,7 +858,7 @@ impl Brain {
 #[pyfunction]
 #[pyo3(signature = (text, content_len, stop_reason=None))]
 fn parse_classify_text(text: &str, content_len: usize, stop_reason: Option<&str>) -> PyResult<String> {
-    synapse_core::parse_classify_text(text, content_len, stop_reason)
+    sinam_core::parse_classify_text(text, content_len, stop_reason)
         .map(|v| v.to_string())
         .map_err(brain_err)
 }
@@ -873,14 +873,14 @@ fn merge_classify_halves(note_json: &str, graph_json: &str) -> PyResult<String> 
         serde_json::from_str(note_json).map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
     let graph: serde_json::Value =
         serde_json::from_str(graph_json).map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-    Ok(synapse_core::merge_halves(note, graph).to_string())
+    Ok(sinam_core::merge_halves(note, graph).to_string())
 }
 
 /// SYN-23 — next concrete date of a (possibly recurring) event, ISO strings;
 /// None when `event_date` doesn't parse (Python returned None there too).
 #[pyfunction]
 fn next_occurrence(event_date: &str, recurring: bool, today: &str) -> Option<String> {
-    synapse_core::next_occurrence_str(event_date, recurring, today)
+    sinam_core::next_occurrence_str(event_date, recurring, today)
 }
 
 /// Build an LlmConfig only when the host resolved a model (client=None parity).
@@ -891,11 +891,11 @@ fn llm_config_opt(
     today: Option<&str>,
     base_url: Option<&str>,
     fuel_token: Option<&str>,
-) -> Option<synapse_core::LlmConfig> {
-    model.map(|model| synapse_core::LlmConfig {
+) -> Option<sinam_core::LlmConfig> {
+    model.map(|model| sinam_core::LlmConfig {
         model: model.to_string(),
         api_key: api_key.unwrap_or_default().to_string(),
-        provider: synapse_core::LlmProvider::Anthropic,
+        provider: sinam_core::LlmProvider::Anthropic,
         local: None,
         base_url: base_url.map(String::from),
         fuel_token: fuel_token.map(String::from),
@@ -907,13 +907,13 @@ fn llm_config_opt(
 /// SYN-21 — all http(s) URLs in a text, de-duplicated, order-preserving.
 #[pyfunction]
 fn extract_urls(text: &str) -> Vec<String> {
-    synapse_core::extract_urls(text)
+    sinam_core::extract_urls(text)
 }
 
 /// SYN-21 — title + visible text of an HTML document, as JSON {title, text}.
 #[pyfunction]
 fn extract_page(html: &str) -> String {
-    let page = synapse_core::extract_page(html);
+    let page = sinam_core::extract_page(html);
     serde_json::json!({"title": page.title, "text": page.text}).to_string()
 }
 
@@ -922,7 +922,7 @@ fn extract_page(html: &str) -> String {
 #[pyo3(signature = (url, timeout=10.0))]
 fn fetch_and_extract(py: Python<'_>, url: &str, timeout: f64) -> Option<String> {
     let timeout = std::time::Duration::from_secs_f64(timeout.max(0.0));
-    py.detach(|| synapse_core::fetch_and_extract(url, timeout))
+    py.detach(|| sinam_core::fetch_and_extract(url, timeout))
         .map(|p| serde_json::json!({"title": p.title, "text": p.text}).to_string())
 }
 
@@ -930,7 +930,7 @@ fn fetch_and_extract(py: Python<'_>, url: &str, timeout: f64) -> Option<String> 
 /// between showing the offer and receiving the scanner's returned key.
 #[pyclass]
 struct PairingSession {
-    inner: synapse_core::PairingSession,
+    inner: sinam_core::PairingSession,
     offer_pub: [u8; 32],
 }
 
@@ -940,7 +940,7 @@ impl PairingSession {
     /// Returns (session, qr_string). Render `qr_string` as a QR code.
     #[staticmethod]
     fn offer(addrs: Vec<String>) -> PyResult<(Self, String)> {
-        let (inner, offer) = synapse_core::PairingSession::offer(addrs).map_err(core_err)?;
+        let (inner, offer) = sinam_core::PairingSession::offer(addrs).map_err(core_err)?;
         let qr = offer.encode();
         let offer_pub = inner.offer_public();
         Ok((Self { inner, offer_pub }, qr))
@@ -967,8 +967,8 @@ fn pairing_accept<'py>(
     py: Python<'py>,
     qr: &str,
 ) -> PyResult<(Bound<'py, PyBytes>, Bound<'py, PyBytes>)> {
-    let offer = synapse_core::PairingOffer::decode(qr).map_err(core_err)?;
-    let (accept_pub, key) = synapse_core::pairing_accept(&offer).map_err(core_err)?;
+    let offer = sinam_core::PairingOffer::decode(qr).map_err(core_err)?;
+    let (accept_pub, key) = sinam_core::pairing_accept(&offer).map_err(core_err)?;
     Ok((PyBytes::new(py, &accept_pub), PyBytes::new(py, &key)))
 }
 
@@ -976,7 +976,7 @@ fn pairing_accept<'py>(
 /// call back) — decoded without completing the exchange.
 #[pyfunction]
 fn pairing_offer_addrs(qr: &str) -> PyResult<Vec<String>> {
-    Ok(synapse_core::PairingOffer::decode(qr)
+    Ok(sinam_core::PairingOffer::decode(qr)
         .map_err(core_err)?
         .addrs)
 }
@@ -992,7 +992,7 @@ fn pairing_seal(
     plaintext: &[u8],
 ) -> PyResult<String> {
     let ck = channel_key32(channel_key)?;
-    synapse_core::pairing_seal(&ck, offer_pub, accept_pub, plaintext).map_err(core_err)
+    sinam_core::pairing_seal(&ck, offer_pub, accept_pub, plaintext).map_err(core_err)
 }
 
 /// Open what `pairing_seal` produced (SYN-128/137) → the plaintext bytes.
@@ -1006,7 +1006,7 @@ fn pairing_open<'py>(
 ) -> PyResult<Bound<'py, PyBytes>> {
     let ck = channel_key32(channel_key)?;
     let out =
-        synapse_core::pairing_open(&ck, offer_pub, accept_pub, sealed_b64).map_err(core_err)?;
+        sinam_core::pairing_open(&ck, offer_pub, accept_pub, sealed_b64).map_err(core_err)?;
     Ok(PyBytes::new(py, &out))
 }
 
@@ -1022,7 +1022,7 @@ fn channel_key32(channel_key: &[u8]) -> PyResult<[u8; 32]> {
 /// messages or the key.
 #[pyclass]
 struct CodePairing {
-    inner: Option<synapse_core::CodePairing>,
+    inner: Option<sinam_core::CodePairing>,
     msg: Vec<u8>,
 }
 
@@ -1030,7 +1030,7 @@ struct CodePairing {
 impl CodePairing {
     #[new]
     fn new(code: &str) -> Self {
-        let (inner, msg) = synapse_core::CodePairing::start(code);
+        let (inner, msg) = sinam_core::CodePairing::start(code);
         Self {
             inner: Some(inner),
             msg,
@@ -1066,7 +1066,7 @@ fn pairing_code_confirm_mac<'py>(
     let ck = channel_key32(channel_key)?;
     Ok(PyBytes::new(
         py,
-        &synapse_core::code_confirm_mac(&ck, member_msg, joiner_msg),
+        &sinam_core::code_confirm_mac(&ck, member_msg, joiner_msg),
     ))
 }
 
@@ -1079,13 +1079,13 @@ fn pairing_code_confirm_verify(
     mac: &[u8],
 ) -> PyResult<bool> {
     let ck = channel_key32(channel_key)?;
-    Ok(synapse_core::code_confirm_verify(
+    Ok(sinam_core::code_confirm_verify(
         &ck, member_msg, joiner_msg, mac,
     ))
 }
 
-#[pymodule(name = "synapse_core")]
-fn synapse_core_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
+#[pymodule(name = "sinam_core")]
+fn sinam_core_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Embedder>()?;
     m.add_class::<Storage>()?;
     m.add_class::<SqlConnection>()?;
@@ -1105,6 +1105,6 @@ fn synapse_core_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(extract_urls, m)?)?;
     m.add_function(wrap_pyfunction!(extract_page, m)?)?;
     m.add_function(wrap_pyfunction!(fetch_and_extract, m)?)?;
-    m.add("EMBEDDING_DIM", synapse_core::EMBEDDING_DIM)?;
+    m.add("EMBEDDING_DIM", sinam_core::EMBEDDING_DIM)?;
     Ok(())
 }

@@ -1,15 +1,15 @@
-# synapse-core
+# sinam-core
 
-The single compiled brain of [Synapse](https://github.com/alexisraitano-myffu/sinam-backend): embeddings, storage, routing, decay, summaries, LLM orchestration and P2P sync, written once in Rust and consumed everywhere.
+The single compiled brain of [sinam](https://github.com/alexisraitano-myffu/sinam-backend): embeddings, storage, routing, decay, summaries, LLM orchestration and P2P sync, written once in Rust and consumed everywhere.
 
-- **Desktop host** (macOS/Windows FastAPI backend): via the PyO3 binding (`crates/synapse-core-py`).
-- **Mobile apps** (Android/iOS): via the UniFFI binding (`crates/synapse-core-ffi`).
+- **Desktop host** (macOS/Windows FastAPI backend): via the PyO3 binding (`crates/sinam-core-py`).
+- **Mobile apps** (Android/iOS): via the UniFFI binding (`crates/sinam-core-ffi`).
 
 One implementation, zero logic divergence between platforms.
 
 ## What's in the core
 
-Everything the "Dream Cycle" does lives here as Rust modules in `crates/synapse-core/src/`:
+Everything the "Dream Cycle" does lives here as Rust modules in `crates/sinam-core/src/`:
 
 | Module | Responsibility |
 | -- | -- |
@@ -34,9 +34,9 @@ A **homemade** sync engine, not a third-party CRDT. cr-sqlite was dormant and re
 
 | Crate | Role |
 | -- | -- |
-| `crates/synapse-core` | Pure Rust library (the brain) |
-| `crates/synapse-core-py` | PyO3 binding, built as a Python wheel with maturin |
-| `crates/synapse-core-ffi` | UniFFI binding for Kotlin and Swift |
+| `crates/sinam-core` | Pure Rust library (the brain) |
+| `crates/sinam-core-py` | PyO3 binding, built as a Python wheel with maturin |
+| `crates/sinam-core-ffi` | UniFFI binding for Kotlin and Swift |
 
 ## Model files are data
 
@@ -49,10 +49,10 @@ cargo build                        # desktop (onnxruntime downloaded at build ti
 cargo test                         # SYNAPSE_MODEL_DIR=<model dir> to run embedding tests
 
 # Python wheel (desktop host)
-cd crates/synapse-core-py && maturin build --release
+cd crates/sinam-core-py && maturin build --release
 
 # Android (the app ships libonnxruntime.so and ort loads it dynamically)
-cargo ndk -t arm64-v8a -t x86_64 build -p synapse-core-ffi --no-default-features --features ort-dynamic --release
+cargo ndk -t arm64-v8a -t x86_64 build -p sinam-core-ffi --no-default-features --features ort-dynamic --release
 ```
 
 ## License

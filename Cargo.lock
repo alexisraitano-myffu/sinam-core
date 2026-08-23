@@ -1835,6 +1835,53 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 
 [[package]]
+name = "sinam-core"
+version = "0.1.0"
+dependencies = [
+ "backtrace",
+ "base64ct",
+ "chacha20poly1305",
+ "chrono",
+ "fastembed",
+ "getrandom 0.2.17",
+ "hkdf",
+ "hmac",
+ "libc",
+ "libloading",
+ "ort",
+ "rusqlite",
+ "serde_json",
+ "sha2",
+ "spake2",
+ "sqlite-vec",
+ "tempfile",
+ "thiserror",
+ "tokenizers",
+ "ureq 2.12.1",
+ "uuid",
+ "x25519-dalek",
+]
+
+[[package]]
+name = "sinam-core-ffi"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "sinam-core",
+ "thiserror",
+ "uniffi",
+]
+
+[[package]]
+name = "sinam-core-py"
+version = "0.1.0"
+dependencies = [
+ "pyo3",
+ "serde_json",
+ "sinam-core",
+]
+
+[[package]]
 name = "siphasher"
 version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1947,53 +1994,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "unicode-ident",
-]
-
-[[package]]
-name = "synapse-core"
-version = "0.1.0"
-dependencies = [
- "backtrace",
- "base64ct",
- "chacha20poly1305",
- "chrono",
- "fastembed",
- "getrandom 0.2.17",
- "hkdf",
- "hmac",
- "libc",
- "libloading",
- "ort",
- "rusqlite",
- "serde_json",
- "sha2",
- "spake2",
- "sqlite-vec",
- "tempfile",
- "thiserror",
- "tokenizers",
- "ureq 2.12.1",
- "uuid",
- "x25519-dalek",
-]
-
-[[package]]
-name = "synapse-core-ffi"
-version = "0.1.0"
-dependencies = [
- "serde_json",
- "synapse-core",
- "thiserror",
- "uniffi",
-]
-
-[[package]]
-name = "synapse-core-py"
-version = "0.1.0"
-dependencies = [
- "pyo3",
- "serde_json",
- "synapse-core",
 ]
 
 [[package]]

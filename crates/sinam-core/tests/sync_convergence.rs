@@ -16,7 +16,7 @@
 
 use std::collections::HashMap;
 
-use synapse_core::{connect, SqlConnection, SqlValue, Storage};
+use sinam_core::{connect, SqlConnection, SqlValue, Storage};
 
 // ── Deterministic RNG (xorshift64*) ──────────────────────────────────────────
 

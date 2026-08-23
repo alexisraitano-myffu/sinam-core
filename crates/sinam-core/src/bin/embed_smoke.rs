@@ -32,7 +32,7 @@ fn main() {
     let model_dir = env::args()
         .nth(1)
         .expect("usage: embed_smoke <model_dir>");
-    let embedder = synapse_core::Embedder::new(&model_dir).expect("embedder init failed");
+    let embedder = sinam_core::Embedder::new(&model_dir).expect("embedder init failed");
     let mut out = serde_json::Map::new();
     for s in SENTENCES {
         let v = embedder.embed(s).expect("embed failed");

@@ -55,7 +55,7 @@ fn main() {
 
     eprintln!("[embed_cli] loading model from {model_dir}...");
     let t0 = std::time::Instant::now();
-    let embedder = synapse_core::Embedder::new(&model_dir).expect("model load failed");
+    let embedder = sinam_core::Embedder::new(&model_dir).expect("model load failed");
     eprintln!("[embed_cli] model loaded in {:?}", t0.elapsed());
 
     let t1 = std::time::Instant::now();

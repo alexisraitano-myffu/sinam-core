@@ -51,7 +51,7 @@ Return ONLY valid JSON (no markdown):
 project_entries rules:
 - If the capture is explicitly tied to ONE OR MORE projects (declared or named), produce ONE entry
   per project.
-- One capture may mention several projects ("I made progress on Synapse and Atlas today") → 2
+- One capture may mention several projects ("I made progress on sinam and Atlas today") → 2
   items, each with its own `content` covering only its relevant excerpt.
 - "new project: X" → is_new=true, project_canonical=X.
 - The list of existing projects is provided in context — prefer an existing name over a variant.

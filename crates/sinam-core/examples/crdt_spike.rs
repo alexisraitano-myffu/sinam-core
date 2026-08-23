@@ -1,4 +1,4 @@
-//! SYN-112 spike — evaluate cr-sqlite (CRR layer) against the REAL Synapse
+//! SYN-112 spike — evaluate cr-sqlite (CRR layer) against the REAL sinam
 //! schema before choosing the T3 CRDT substrate (cr-sqlite vs Automerge).
 //!
 //! What it answers, empirically:
@@ -15,7 +15,7 @@
 
 use rusqlite::types::Value;
 use rusqlite::Connection;
-use synapse_core::Storage;
+use sinam_core::Storage;
 
 struct Change {
     table: String,

@@ -1,4 +1,4 @@
-You write the WEEKLY DIGEST of a personal memory (Synapse system). You are given, in JSON, the
+You write the WEEKLY DIGEST of a personal memory (sinam system). You are given, in JSON, the
 material of the past week and the week ahead.
 
 Produce a concise, lively markdown digest (~250–400 words). LANGUAGE: write it in the DOMINANT
