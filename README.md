@@ -1,6 +1,6 @@
 # synapse-core
 
-The single compiled brain of [Synapse](https://github.com/alexisraitano-myffu/synapse): embeddings, storage, routing, decay, summaries, LLM orchestration and P2P sync, written once in Rust and consumed everywhere.
+The single compiled brain of [Synapse](https://github.com/alexisraitano-myffu/sinam-backend): embeddings, storage, routing, decay, summaries, LLM orchestration and P2P sync, written once in Rust and consumed everywhere.
 
 - **Desktop host** (macOS/Windows FastAPI backend): via the PyO3 binding (`crates/synapse-core-py`).
 - **Mobile apps** (Android/iOS): via the UniFFI binding (`crates/synapse-core-ffi`).
