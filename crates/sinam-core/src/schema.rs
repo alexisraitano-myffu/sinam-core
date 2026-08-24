@@ -171,6 +171,26 @@ pub(crate) fn init_schema(conn: &Connection) -> Result<(), rusqlite::Error> {
             resolved_at           TIMESTAMP,
             resolved_canonical_id TEXT REFERENCES entities(id)
         )",
+        // ── SYN-190 — Predicate reconciliation queue ────────────────────────
+        // Entity types are a closed vocabulary, so they are governed by a list.
+        // Predicates are open by nature — a fact can be of a genuinely new kind —
+        // so they are governed AFTER the fact instead: a predicate seen for the
+        // first time is compared to those already in use, and a near-duplicate
+        // becomes a proposal. Same shape as `entity_merge_proposals`, one level
+        // down, and for the same reason: never merge knowledge on a guess.
+        "CREATE TABLE IF NOT EXISTS predicate_merge_proposals (
+            id                  TEXT PRIMARY KEY,
+            kind                TEXT NOT NULL,
+            candidate_predicate TEXT NOT NULL,
+            existing_predicate  TEXT NOT NULL,
+            similarity_score    REAL NOT NULL,
+            similarity_reason   TEXT,
+            evidence_capture_id TEXT REFERENCES inbox(id),
+            status              TEXT NOT NULL DEFAULT 'pending',
+            created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            resolved_at         TIMESTAMP,
+            resolved_predicate  TEXT
+        )",
         // ── SYN-58 — Live entity-type vocabulary + proposals ────────────────
         "CREATE TABLE IF NOT EXISTS active_entity_types (
             type        TEXT PRIMARY KEY,
@@ -368,6 +388,8 @@ pub(crate) fn init_schema(conn: &Connection) -> Result<(), rusqlite::Error> {
          ON project_entries(project_id, created_at DESC)",
         "CREATE INDEX IF NOT EXISTS idx_merge_proposals_status \
          ON entity_merge_proposals(status, created_at DESC)",
+        "CREATE INDEX IF NOT EXISTS idx_predicate_proposals_status \
+         ON predicate_merge_proposals(status, created_at DESC)",
         "CREATE INDEX IF NOT EXISTS idx_type_proposals_status \
          ON entity_type_proposals(status, created_at DESC)",
         "CREATE INDEX IF NOT EXISTS idx_project_attach_proposals_status \

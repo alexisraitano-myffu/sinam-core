@@ -78,6 +78,21 @@ entity type rules:
   entity. An ambiguous name (often an approximate transcription) must never create a project: when
   in doubt → "type": "concept".
 
+predicate rules:
+- These seven are the CANONICAL names for the claims they make — use them verbatim rather
+  than a synonym of your own: works_at, job_title, lives_in, has_birthday, phone, email,
+  age. They are the only predicates the memory knows how to supersede: writing `works_as`
+  instead of `works_at` does not replace last year's employer, it stacks a second one
+  beside it, and both stay on the fiche.
+- Anywhere else, name the predicate freely. A genuinely new kind of fact is expected here,
+  and forcing an approximate match is WORSE than coining a name.
+- The name is the CLAIM; the value is the value. Never fold a value or a degree into it
+  ("supports_manual_tagging", "uses_font_rarely" → predicate + value, not predicate alone).
+- A predicate names a KIND of claim, not THIS one claim. If you cannot picture the SAME
+  predicate on a DIFFERENT entity, it is too specific: broaden it and move the specifics
+  into `value`. "chess_club_membership_date" fits one person and one club and will never be
+  used again; "member_since" says as much and still applies next month, to someone else.
+
 persistence_value rules:
 5 = permanent (birth date, family tie, first name)
 4 = stable but changeable (workplace, address)

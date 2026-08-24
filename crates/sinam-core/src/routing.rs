@@ -38,6 +38,27 @@ const PROJECT_ATTACH_THRESHOLD_DEFAULT: f64 = 0.30;
 const PROJECT_ATTACH_MARGIN_DEFAULT: f64 = 0.03;
 const REVIEW_CONFIDENCE_THRESHOLD_DEFAULT: f64 = 0.7;
 
+/// SYN-190 — how close two predicate NAMES must embed to be worth proposing.
+///
+/// Measured 2026-08-24 on the real vocabulary, and the number is NOT the story:
+/// the two distributions overlap completely, so no threshold separates them.
+///
+/// ```text
+/// must never merge                     true synonyms
+/// interviewed_at ⇄ interviewed_by 0.955   is_cousin_of ⇄ cousin_of 0.970
+/// parent_of      ⇄ child_of       0.817   phone_number ⇄ phone     0.761
+/// sibling_of     ⇄ cousin_of      0.765   works_as     ⇄ works_at  0.696
+/// son_of         ⇄ daughter_of    0.589   family_relation ⇄ sibling_of 0.598
+/// ```
+///
+/// `parent_of` and `child_of` are INVERSES: that merge would flip the direction
+/// of the graph. So embedding a predicate name is NOT a usable general proposer,
+/// and the pass below restricts it to single-valued families only — where a
+/// synonym is a genuine bug (it breaks supersede) and where the relation-inverse
+/// minefield does not exist, since relations have no families. Restricted that
+/// way it yields 6 proposals over 91 predicates, all of them defensible.
+const PREDICATE_MERGE_THRESHOLD_DEFAULT: f64 = 0.65;
+
 /// Predicates that hold at most one live value, grouped by the claim they
 /// make. A new value supersedes the previous one across the whole family:
 /// `birthday` and `has_birthday` are one claim under two names, and letting
@@ -904,7 +925,202 @@ impl Brain {
             }
         }
 
+        // SYN-190 — après TOUTES les écritures, jamais pendant.
+        self.propose_predicate_merges(conn, classified, source_inbox_id)?;
+
         Ok(entity_ids)
+    }
+
+    // ── SYN-190 — predicate reconciliation ──────────────────────────────
+
+    /// The comparable form of a predicate: empty affixes stripped, verbs cut back
+    /// to a stem, words sorted. `is_cousin_of` and `cousin_of` collapse onto the
+    /// same signature, `worked_at` and `works_at` too.
+    ///
+    /// Deliberately timid. An aggressive stemmer would fuse `born_on` with
+    /// `borrows`, and a wrong merge costs far more than a surviving duplicate.
+    /// It is also why the embedding pass below exists: the signature MISSES
+    /// `works_as` → `works_at`, measured, and that is the flagship case.
+    fn predicate_signature(predicate: &str) -> String {
+        let mut p = predicate.trim().to_lowercase();
+        for pre in ["is_", "has_", "was_", "were_"] {
+            if let Some(rest) = p.strip_prefix(pre) {
+                p = rest.to_string();
+                break;
+            }
+        }
+        for suf in ["_of", "_to", "_for"] {
+            if let Some(rest) = p.strip_suffix(suf) {
+                p = rest.to_string();
+                break;
+            }
+        }
+        let mut mots: Vec<String> = Vec::new();
+        for m in p.split('_') {
+            if m.is_empty() || matches!(m, "the" | "a" | "an") {
+                continue;
+            }
+            let mut m = m.to_string();
+            for term in ["ing", "ed", "es", "s"] {
+                if m.len() > 4 && m.ends_with(term) {
+                    m.truncate(m.len() - term.len());
+                    break;
+                }
+            }
+            mots.push(m);
+        }
+        mots.sort();
+        mots.join(" ")
+    }
+
+    /// Two predicates differing by exactly ONE token IN THE SAME POSITION are not
+    /// synonyms — they are one claim carrying two different values
+    /// (`supports_manual_tagging` / `supports_automatic_tagging`,
+    /// `is_primary_channel_for` / `is_secondary_channel_for`). Merging them would
+    /// DESTROY information, yet this is precisely the family the embedding scores
+    /// highest: 0.92 on the pair above, measured 2026-08-24. So it is filtered out
+    /// before it can ever reach the queue.
+    ///
+    /// The right repair for them is to widen the predicate and move the odd word
+    /// into `value` — a rewrite, not a merge, and one that only holds when the
+    /// value slot is free. `scripts/predicats.py` proposes those separately.
+    fn is_sibling_pair(a: &str, b: &str) -> bool {
+        let (ta, tb): (Vec<&str>, Vec<&str>) = (a.split('_').collect(), b.split('_').collect());
+        if ta.len() != tb.len() || ta.len() < 3 {
+            return false;
+        }
+        ta.iter().zip(tb.iter()).filter(|(x, y)| x != y).count() == 1
+    }
+
+    /// A predicate this capture used for the FIRST time, compared to those already
+    /// in use. Runs after every fact and relation is written, never inside
+    /// `insert_fact`: that one executes inside the caller's open transaction while
+    /// the embedder writes on the core's own connection, which is the documented
+    /// SQLITE_BUSY trap.
+    ///
+    /// It only ever PROPOSES. Accepting a merge toward a single-valued family head
+    /// (`works_as` → `works_at`) triggers the SYN-37 supersede and obsoletes the
+    /// previous fact: doing that unattended would delete knowledge in silence.
+    fn propose_predicate_merges(
+        &self,
+        conn: &Connection,
+        classified: &Value,
+        capture_id: &str,
+    ) -> Result<(), CoreError> {
+        let mut vus: HashSet<(String, String)> = HashSet::new();
+        for entity in arr(classified.get("entities")) {
+            for fact in arr(entity.get("facts")) {
+                if let Some(p) = fact.get("predicate").and_then(Value::as_str) {
+                    vus.insert(("fact".to_string(), p.trim().to_lowercase()));
+                }
+            }
+        }
+        for rel in arr(classified.get("relations")) {
+            if let Some(p) = rel.get("predicate").and_then(Value::as_str) {
+                vus.insert(("relation".to_string(), p.trim().to_lowercase()));
+            }
+        }
+
+        let seuil = env_f64(
+            "SYNAPSE_PREDICATE_MERGE_THRESHOLD",
+            PREDICATE_MERGE_THRESHOLD_DEFAULT,
+        );
+        for (kind, predicate) in vus {
+            if predicate.is_empty() {
+                continue;
+            }
+            let table = if kind == "fact" { "facts" } else { "relations" };
+            // Inédit = aucune autre capture ne l'a jamais employé. Sans ce garde,
+            // chaque capture rejouerait la comparaison sur tout le vocabulaire.
+            let ailleurs: i64 = conn.query_row(
+                &format!(
+                    "SELECT COUNT(*) FROM {table} WHERE predicate = ?1 \
+                     AND COALESCE(provenance_capture_id, '') <> ?2"
+                ),
+                params![predicate, capture_id],
+                |r| r.get(0),
+            )?;
+            if ailleurs > 0 {
+                continue;
+            }
+            self.propose_one_predicate(conn, &kind, table, &predicate, capture_id, seuil)?;
+        }
+        Ok(())
+    }
+
+    fn propose_one_predicate(
+        &self,
+        conn: &Connection,
+        kind: &str,
+        table: &str,
+        predicate: &str,
+        capture_id: &str,
+        seuil: f64,
+    ) -> Result<(), CoreError> {
+        let sql = format!(
+            "SELECT DISTINCT predicate FROM {table} \
+             WHERE predicate IS NOT NULL AND predicate <> ?1"
+        );
+        let mut stmt = conn.prepare(&sql)?;
+        let voisins: Vec<String> = stmt
+            .query_map(params![predicate], |r| r.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        drop(stmt);
+        if voisins.is_empty() {
+            return Ok(());
+        }
+
+        // 1. Signature lexicale — précise, gratuite, mais faible en rappel.
+        let sig = Self::predicate_signature(predicate);
+        for v in &voisins {
+            if Self::predicate_signature(v) == sig {
+                return record_predicate_proposal(
+                    conn, kind, predicate, v, 0.95, "signature", capture_id,
+                );
+            }
+        }
+
+        // 2. Rattrapage sémantique, RESTREINT AUX FAMILLES MONO-VALUÉES.
+        //
+        // C'est ce qui attrape `works_as` → `works_at`, que la signature rate. Et
+        // c'est volontairement tout ce qu'il attrape : hors des familles, la
+        // ressemblance des noms ne distingue pas un synonyme d'un inverse (voir
+        // la mesure sur PREDICATE_MERGE_THRESHOLD_DEFAULT). Ici l'enjeu est net —
+        // un synonyme d'une tête de famille CASSE le supersede, donc chaque
+        // proposition répare un bug réel plutôt que d'exprimer un goût.
+        if single_valued_family(predicate).is_some() {
+            return Ok(()); // déjà dans une famille : rien à réconcilier
+        }
+        let Ok(cible) = self.embed_text(&predicate.replace('_', " ")) else {
+            return Ok(()); // embed indisponible → on saute, comme la fusion d'entités
+        };
+        let mut meilleur: Option<(f64, &'static str)> = None;
+        for v in &voisins {
+            let Some(famille) = single_valued_family(v) else {
+                continue;
+            };
+            if Self::is_sibling_pair(predicate, v) {
+                continue;
+            }
+            let Ok(vv) = self.embed_text(&v.replace('_', " ")) else {
+                continue;
+            };
+            let score: f64 = cible
+                .iter()
+                .zip(vv.iter())
+                .map(|(x, y)| (*x as f64) * (*y as f64))
+                .sum();
+            // La cible est la TÊTE de la famille, jamais le membre rencontré :
+            // c'est elle que `insert_fact` sait périmer.
+            if score >= seuil && meilleur.map_or(true, |(s, _)| score > s) {
+                meilleur = Some((score, famille[0]));
+            }
+        }
+        if let Some((score, tete)) = meilleur {
+            let reason = format!("famille_{score:.2}");
+            record_predicate_proposal(conn, kind, predicate, tete, score, &reason, capture_id)?;
+        }
+        Ok(())
     }
 
     // ── merge + attach proposals ────────────────────────────────────────
@@ -1335,6 +1551,44 @@ fn upsert_entity(
         )?;
         Ok(entity_id)
     }
+}
+
+fn record_predicate_proposal(
+    conn: &Connection,
+    kind: &str,
+    candidate: &str,
+    existing: &str,
+    score: f64,
+    reason: &str,
+    capture_id: &str,
+) -> Result<(), CoreError> {
+    // La DIRECTION compte. Si l'un des deux est tête d'une famille mono-valuée,
+    // c'est lui la cible : ramener un synonyme vers la tête RÉPARE le supersede,
+    // l'inverse le casserait définitivement.
+    let (candidate, existing) = if single_valued_family(candidate).is_some()
+        && single_valued_family(existing).is_none()
+    {
+        (existing, candidate)
+    } else {
+        (candidate, existing)
+    };
+    let exists: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM predicate_merge_proposals \
+         WHERE kind = ?1 AND ((candidate_predicate=?2 AND existing_predicate=?3) \
+                           OR (candidate_predicate=?3 AND existing_predicate=?2))",
+        params![kind, candidate, existing],
+        |r| r.get(0),
+    )?;
+    if exists > 0 {
+        return Ok(());
+    }
+    conn.execute(
+        "INSERT INTO predicate_merge_proposals \
+         (id, kind, candidate_predicate, existing_predicate, similarity_score, \
+          similarity_reason, evidence_capture_id) VALUES (?1,?2,?3,?4,?5,?6,?7)",
+        params![new_uuid(), kind, candidate, existing, score, reason, capture_id],
+    )?;
+    Ok(())
 }
 
 fn record_merge_proposal(
@@ -1902,6 +2156,77 @@ fn add_days_iso(date: &str, days: i64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── SYN-190 ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn signature_collapses_empty_affixes_and_tense() {
+        let sig = Brain::predicate_signature;
+        assert_eq!(sig("is_cousin_of"), sig("cousin_of"));
+        assert_eq!(sig("worked_at"), sig("works_at"));
+        assert_eq!(sig("has_birthday"), sig("birthday"));
+        // Et ce qu'elle NE fusionne PAS : deux prépositions différentes font deux
+        // affirmations différentes, et c'est justement le cas que l'embedding doit
+        // rattraper (`works_as` → `works_at`), pas la signature.
+        assert_ne!(sig("works_as"), sig("works_at"));
+        // Un stemmer trop gourmand casserait celui-ci.
+        assert_ne!(sig("born_on"), sig("borrows"));
+    }
+
+    #[test]
+    fn sibling_pairs_are_never_a_merge() {
+        // Un mot qui diffère à la MÊME place : une affirmation, deux valeurs.
+        // Les fusionner détruirait l'information, et c'est pourtant la paire que
+        // l'embedding note le plus haut (0,92 mesuré le 2026-08-24).
+        assert!(Brain::is_sibling_pair(
+            "supports_manual_tagging",
+            "supports_automatic_tagging"
+        ));
+        assert!(Brain::is_sibling_pair(
+            "is_primary_channel_for",
+            "is_secondary_channel_for"
+        ));
+        // Deux vrais synonymes ne sont PAS des jumeaux : ils doivent passer.
+        assert!(!Brain::is_sibling_pair("works_as", "works_at"));
+        assert!(!Brain::is_sibling_pair("profession", "job_title"));
+    }
+
+    #[test]
+    fn proposal_points_toward_the_family_head() {
+        // La direction décide si accepter la proposition RÉPARE le supersede ou
+        // le casse pour de bon. `works_at` est tête de famille, `works_as` non :
+        // la cible doit être la tête, quel que soit l'ordre d'appel.
+        // Table créée à la main : `init_schema` monte tout le schéma, y compris
+        // les tables virtuelles vec0 que ce test n'a pas et dont il n'a pas besoin.
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE predicate_merge_proposals (
+                id TEXT PRIMARY KEY, kind TEXT, candidate_predicate TEXT,
+                existing_predicate TEXT, similarity_score REAL,
+                similarity_reason TEXT, evidence_capture_id TEXT,
+                status TEXT DEFAULT 'pending')",
+        )
+        .unwrap();
+        record_predicate_proposal(&conn, "fact", "works_at", "works_as", 0.93, "t", "c1")
+            .unwrap();
+        let (cand, exist): (String, String) = conn
+            .query_row(
+                "SELECT candidate_predicate, existing_predicate \
+                 FROM predicate_merge_proposals",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!((cand.as_str(), exist.as_str()), ("works_as", "works_at"));
+
+        // Idempotent dans les deux sens : la même paire ne fait pas deux lignes.
+        record_predicate_proposal(&conn, "fact", "works_as", "works_at", 0.93, "t", "c2")
+            .unwrap();
+        let n: i64 = conn
+            .query_row("SELECT COUNT(*) FROM predicate_merge_proposals", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 1);
+    }
 
     #[test]
     fn confidence_matches_python_formula() {
