@@ -105,14 +105,19 @@ pub(crate) fn gather_week(
     // case stays correct.
     let dated_raw = query_row_maps(
         conn,
-        // SYN-182 — a RECURRING episode belongs here too. "our first meeting with
-        // Marie was 18 April" is past, so the routing table sends it to `episode`;
-        // it is still a date that comes back every year, and before today it could
-        // not even be stored. Non-recurring episodes stay out by construction —
-        // they are one-shots already behind us. `owner IS NULL` keeps someone
-        // else's dated task off my week.
+        // Everything DATED belongs here, whatever its kind. The clause used to
+        // admit episodes only when recurring, on the ground that "non-recurring
+        // episodes are one-shots already behind us". That ground is false: an
+        // episode is something LIVED, but the date it carries can be ahead —
+        // "I called the plumber, he's coming Tuesday" is the routing table's own
+        // example of an episode, and its date is next Tuesday. Such a note never
+        // reached the digest.
+        // Dropping the restriction admits no past one-shot either: `occ < today`
+        // below already discards them, so the SQL clause was redundant where it
+        // was right and harmful where it was not.
+        // `owner IS NULL` keeps someone else's dated task off my week.
         "SELECT title, content, kind, event_date, event_recurring FROM atomic_notes \
-         WHERE (kind IN ('event', 'task') OR (kind = 'episode' AND event_recurring = 1)) \
+         WHERE kind IN ('event', 'task', 'episode', 'note') \
          AND archived_at IS NULL AND event_date IS NOT NULL \
          AND review_status != 'pending' AND owner IS NULL",
         &[],
@@ -390,6 +395,38 @@ mod tests {
             next_occurrence("2024-02-29", true, d("2025-01-15")),
             Some(d("2025-03-01"))
         );
+    }
+
+    #[test]
+    fn a_dated_episode_reaches_the_week_even_when_it_never_comes_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("digest-episode.db");
+        let _storage = crate::Storage::open(path.to_str().unwrap()).unwrap();
+        let c = crate::connect(path.to_str().unwrap()).unwrap();
+        for sql in [
+            // The routing table's own episode example: the call is lived, the
+            // visit is ahead. Non-recurring, and it used to be filtered out.
+            "INSERT INTO atomic_notes (id, title, content, kind, event_date, event_recurring, \
+             created_at) VALUES ('ep1','Plombier','il vient mardi','episode','2026-06-19',0,\
+             '2026-06-15 10:00:00')",
+            // A one-shot already behind us must still stay out — the date filter
+            // does that, not the kind.
+            "INSERT INTO atomic_notes (id, title, content, kind, event_date, event_recurring, \
+             created_at) VALUES ('ep2','Dîner chez Léa','x','episode','2026-06-10',0,\
+             '2026-06-15 10:00:00')",
+        ] {
+            c.execute(sql, &[]).unwrap();
+        }
+
+        let week = c.gather_week(Some("2026-06-17 12:00:00"), 7).unwrap();
+        let titres: Vec<&str> = week["upcoming_events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| e["title"].as_str().unwrap())
+            .collect();
+        assert!(titres.contains(&"Plombier"), "épisode daté à venir absent : {titres:?}");
+        assert!(!titres.contains(&"Dîner chez Léa"), "épisode passé remonté : {titres:?}");
     }
 
     #[test]
