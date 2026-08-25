@@ -144,6 +144,31 @@ pub struct ProjectSynthesis {
     pub entry_count: i64,
 }
 
+/// SYN-189 — what the capture's negations actually did.
+///
+/// Kept on the report rather than left implicit because the failure this
+/// feature exists to avoid is a SILENT one: a capture saying something is no
+/// longer true, and the memory doing nothing about it without ever saying so.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct NegationOutcome {
+    /// Target certain, fact obsoleted on the spot (reversible).
+    pub applied: i64,
+    /// Target not certain: an arbitration is waiting in the queue.
+    pub proposed: i64,
+    /// Nothing to negate — unknown entity, or one carrying no facts at all.
+    pub unmatched: i64,
+}
+
+/// What one `obsoleted_facts` item ended up doing.
+enum NegationVerdict {
+    /// N live facts retired (reversibly).
+    Applied(i64),
+    /// Target not certain — an arbitration is queued instead.
+    Proposed,
+    /// Nothing on file to retire; correctly a no-op.
+    Nothing,
+}
+
 #[derive(Debug, Default)]
 pub struct RouteReport {
     pub entity_ids: Vec<String>,
@@ -153,6 +178,7 @@ pub struct RouteReport {
     pub created_note_id: Option<String>,
     pub project_syntheses: Vec<ProjectSynthesis>,
     pub fast_exit: bool,
+    pub negations: NegationOutcome,
 }
 
 /// The routing brain: storage + (optionally) the embedder that powers the
@@ -314,6 +340,14 @@ impl Brain {
                 report.entity_ids =
                     self.step4_route(&conn, classified, resolved, capture_id, durable_note, ctx)?;
             }
+
+            // SYN-189 — OUTSIDE the `resolved` guard on purpose. A capture whose
+            // whole point is a negation ("Pierre ne travaille plus chez Acme")
+            // may teach nothing new and come back with `entities: []`, which
+            // leaves `resolved` at None. Nesting this inside would make the pure
+            // negation — the very case the feature exists for — the one case it
+            // never runs on.
+            report.negations = self.apply_negations(&conn, classified, capture_id)?;
 
             // Atomic note (SYN-56/58/85 gates).
             let mut created_note_id: Option<String> = None;
@@ -493,6 +527,11 @@ impl Brain {
             "new_facts": report.new_facts,
             "created_note_id": report.created_note_id,
             "fast_exit": report.fast_exit,
+            "negations": {
+                "applied": report.negations.applied,
+                "proposed": report.negations.proposed,
+                "unmatched": report.negations.unmatched,
+            },
             "project_syntheses": report.project_syntheses.iter().map(|s| json!({
                 "project_id": s.project_id,
                 "entry_id": s.entry_id,
@@ -929,6 +968,175 @@ impl Brain {
         self.propose_predicate_merges(conn, classified, source_inbox_id)?;
 
         Ok(entity_ids)
+    }
+
+    // ── SYN-189 — fact negation ─────────────────────────────────────────
+
+    /// Apply what the capture says has STOPPED being true.
+    ///
+    /// A negation is the SYN-37 supersede without a successor: the same
+    /// machinery, minus the new value. It never deletes. `obsoleted_at` is set
+    /// and `obsoleted_by` stays NULL — nothing replaced the fact, it simply
+    /// ceased — and `POST /fact/{id}/restore` puts it back. That reversibility
+    /// is the whole reason applying on the spot is defensible at all.
+    ///
+    /// On the spot ONLY when the target is certain. Everything else becomes a
+    /// proposal, because the mistake available to this pass is to hide a true
+    /// fact, and a hidden fact is not something anyone notices is missing.
+    fn apply_negations(
+        &self,
+        conn: &Connection,
+        classified: &Value,
+        capture_id: &str,
+    ) -> Result<NegationOutcome, CoreError> {
+        let mut out = NegationOutcome::default();
+        for item in arr(classified.get("obsoleted_facts")) {
+            let canonical = item
+                .get("entity_canonical")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .trim()
+                .to_string();
+            let predicate = item
+                .get("predicate")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .trim()
+                .to_string();
+            if canonical.is_empty() || predicate.is_empty() {
+                continue;
+            }
+            // An absent value and an empty one say the same thing here: the
+            // capture named the claim, not which of its values it meant.
+            let value = item
+                .get("value")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|v| !v.is_empty())
+                .map(String::from);
+            match self.negate_one(conn, &canonical, &predicate, value.as_deref(), capture_id)? {
+                NegationVerdict::Applied(n) => out.applied += n,
+                NegationVerdict::Proposed => out.proposed += 1,
+                NegationVerdict::Nothing => out.unmatched += 1,
+            }
+        }
+        Ok(out)
+    }
+
+    fn negate_one(
+        &self,
+        conn: &Connection,
+        canonical: &str,
+        predicate: &str,
+        value: Option<&str>,
+        capture_id: &str,
+    ) -> Result<NegationVerdict, CoreError> {
+        let entity_id = match find_existing_entity(conn, canonical, &[])?
+            .and_then(|row| row.get("id").and_then(Value::as_str).map(String::from))
+        {
+            Some(id) => id,
+            // Nothing was ever recorded about this entity, so nothing about it
+            // can have stopped being true. A negation NEVER creates a node, and
+            // never writes a "negative fact" (SYN-189): silence is the answer.
+            None => return Ok(NegationVerdict::Nothing),
+        };
+
+        // Every live fact on the entity, minus what THIS capture just wrote: a
+        // capture does not get to negate its own writes, and the same text can
+        // legitimately state a new value and retire an old one.
+        let live: Vec<(String, String, String)> = {
+            let mut stmt = conn.prepare(
+                "SELECT id, LOWER(TRIM(predicate)), LOWER(TRIM(value)) FROM facts \
+                 WHERE entity_id = ?1 AND obsoleted_at IS NULL AND archived_at IS NULL \
+                 AND COALESCE(provenance_capture_id, '') <> ?2",
+            )?;
+            let rows = stmt
+                .query_map(params![entity_id, capture_id], |r| {
+                    Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+            rows
+        };
+        if live.is_empty() {
+            return Ok(NegationVerdict::Nothing);
+        }
+
+        // The CLAIM, not the word. Negating `works_at` has to reach `employer`
+        // too — exactly the reach a new value would have had through supersede.
+        // Outside a family the predicate is taken literally, which is the
+        // residual SYN-190 leaves behind and the reason it blocked this ticket.
+        let family: Vec<String> = match single_valued_family(predicate) {
+            Some(f) => f.iter().map(|p| (*p).to_string()).collect(),
+            None => vec![predicate.trim().to_lowercase()],
+        };
+        let on_predicate: Vec<(String, String, String)> = live
+            .iter()
+            .filter(|(_, p, _)| family.iter().any(|f| f == p))
+            .cloned()
+            .collect();
+
+        if on_predicate.is_empty() {
+            // SYN-190's signature, reused as a LAST resort: `worked_at` against
+            // `works_at` outside any family. Close enough to be worth showing,
+            // never close enough to act on — that is the same measurement that
+            // stops the predicate pass from merging on its own authority.
+            let sig = Self::predicate_signature(predicate);
+            let near: Vec<String> = live
+                .iter()
+                .filter(|(_, p, _)| Self::predicate_signature(p) == sig)
+                .map(|(id, _, _)| id.clone())
+                .collect();
+            let reason = if near.is_empty() { "introuvable" } else { "approximatif" };
+            record_negation_proposal(
+                conn, &entity_id, predicate, value, reason, &near, capture_id,
+            )?;
+            return Ok(NegationVerdict::Proposed);
+        }
+
+        let targets: Vec<String> = match value {
+            Some(v) => {
+                let needle = v.trim().to_lowercase();
+                on_predicate
+                    .iter()
+                    .filter(|(_, _, val)| *val == needle)
+                    .map(|(id, _, _)| id.clone())
+                    .collect()
+            }
+            // No value named means the whole claim stopped holding ("il n'a
+            // plus de téléphone"). Retiring every live value of that claim IS
+            // the certain reading, not an ambiguous one.
+            None => on_predicate.iter().map(|(id, _, _)| id.clone()).collect(),
+        };
+
+        if targets.is_empty() {
+            // The claim is on file, the value is not: the capture and the
+            // memory disagree about WHAT was true. Retiring the stored value
+            // would be settling a contradiction we have not looked at.
+            let candidates: Vec<String> =
+                on_predicate.iter().map(|(id, _, _)| id.clone()).collect();
+            record_negation_proposal(
+                conn,
+                &entity_id,
+                predicate,
+                value,
+                "valeur_differente",
+                &candidates,
+                capture_id,
+            )?;
+            return Ok(NegationVerdict::Proposed);
+        }
+
+        for fact_id in &targets {
+            conn.execute(
+                "UPDATE facts SET obsoleted_at = CURRENT_TIMESTAMP WHERE id = ?1",
+                params![fact_id],
+            )?;
+        }
+        conn.execute(
+            "UPDATE entities SET summary_stale = 1 WHERE id = ?1",
+            params![entity_id],
+        )?;
+        Ok(NegationVerdict::Applied(targets.len() as i64))
     }
 
     // ── SYN-190 — predicate reconciliation ──────────────────────────────
@@ -1551,6 +1759,49 @@ fn upsert_entity(
         )?;
         Ok(entity_id)
     }
+}
+
+/// SYN-189 — park a negation whose target is not certain.
+///
+/// Idempotent on (entity, predicate, value) while pending: the same capture
+/// replayed, or the same claim denied twice before anyone arbitrates, must not
+/// stack two identical questions in the queue.
+#[allow(clippy::too_many_arguments)]
+fn record_negation_proposal(
+    conn: &Connection,
+    entity_id: &str,
+    predicate: &str,
+    value: Option<&str>,
+    reason: &str,
+    candidate_fact_ids: &[String],
+    capture_id: &str,
+) -> Result<(), CoreError> {
+    let already: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM fact_negation_proposals \
+         WHERE entity_id = ?1 AND LOWER(TRIM(predicate)) = LOWER(TRIM(?2)) \
+         AND COALESCE(LOWER(TRIM(value)), '') = COALESCE(LOWER(TRIM(?3)), '') \
+         AND status = 'pending'",
+        params![entity_id, predicate, value],
+        |r| r.get(0),
+    )?;
+    if already > 0 {
+        return Ok(());
+    }
+    conn.execute(
+        "INSERT INTO fact_negation_proposals \
+         (id, entity_id, predicate, value, reason, candidate_fact_ids, evidence_capture_id) \
+         VALUES (?1,?2,?3,?4,?5,?6,?7)",
+        params![
+            new_uuid(),
+            entity_id,
+            predicate,
+            value,
+            reason,
+            serde_json::to_string(candidate_fact_ids).unwrap_or_else(|_| "[]".to_string()),
+            capture_id
+        ],
+    )?;
+    Ok(())
 }
 
 fn record_predicate_proposal(
@@ -2393,6 +2644,163 @@ mod tests {
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
         )
         .unwrap()
+    }
+
+    // ── SYN-189 — négation d'un fait ────────────────────────────────────
+
+    /// Sème une entité et ses faits vivants, puis route une capture qui ne fait
+    /// QUE nier. `entities: []` est volontaire : c'est la forme d'une capture
+    /// dont toute la charge est la négation, et celle où la passe doit tourner
+    /// alors même que `step4_route` ne s'exécute pas.
+    /// Un fait tel que le test le relit : prédicat, péremption, successeur.
+    type FactRow = (String, Option<String>, Option<String>);
+
+    fn negate(seed: &[(&str, &str, &str)], obsoleted: Value) -> (Vec<FactRow>, Vec<String>) {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("s.db");
+        let brain = Brain::open(db.to_str().unwrap(), None).unwrap();
+        {
+            let conn = brain.storage.lock().unwrap();
+            conn.execute("INSERT INTO inbox (id, content) VALUES ('c1','x')", []).unwrap();
+            conn.execute(
+                "INSERT INTO entities (id, type, canonical_name) VALUES ('e1','person','Pierre')",
+                [],
+            ).unwrap();
+            for (i, (pred, val, prov)) in seed.iter().enumerate() {
+                conn.execute(
+                    "INSERT INTO facts \
+                     (id, entity_id, predicate, value, confidence, provenance_capture_id) \
+                     VALUES (?1,'e1',?2,?3,1.0,?4)",
+                    params![format!("f{i}"), pred, val, prov],
+                ).unwrap();
+            }
+        }
+        let mut classified = base_note("note");
+        classified["obsoleted_facts"] = obsoleted;
+        let ctx = RouteContext {
+            now: "2026-08-25T12:00:00".into(),
+            today: "2026-08-25".into(),
+            intentions_cutoff: "2026-08-23T12:00:00".into(),
+            now_sql: "2026-08-25 12:00:00".into(),
+        };
+        brain
+            .route_capture(&json!({"id": "c1", "content": "x"}), &classified, &ctx)
+            .unwrap();
+        let conn = brain.storage.lock().unwrap();
+        let facts = {
+            let mut stmt = conn
+                .prepare("SELECT predicate, obsoleted_at, obsoleted_by FROM facts ORDER BY id")
+                .unwrap();
+            let rows = stmt
+                .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+                .unwrap()
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap();
+            rows
+        };
+        let proposals = {
+            let mut stmt = conn
+                .prepare("SELECT reason FROM fact_negation_proposals ORDER BY rowid")
+                .unwrap();
+            let rows = stmt
+                .query_map([], |r| r.get(0))
+                .unwrap()
+                .collect::<Result<Vec<String>, _>>()
+                .unwrap();
+            rows
+        };
+        (facts, proposals)
+    }
+
+    #[test]
+    fn a_certain_negation_retires_the_fact_without_a_successor() {
+        // `obsoleted_by` doit rester NULL : rien n'a remplacé ce fait, il a
+        // cessé. C'est ce qui distingue une négation d'un supersede SYN-37, et
+        // c'est ce que lit `/fact/{id}/restore` pour le rappeler.
+        let (facts, proposals) = negate(
+            &[("works_at", "Acme", "c0")],
+            json!([{"entity_canonical": "Pierre", "predicate": "works_at", "value": "Acme"}]),
+        );
+        assert!(facts[0].1.is_some(), "le fait devait être périmé");
+        assert!(facts[0].2.is_none(), "aucun successeur ne doit être inscrit");
+        assert!(proposals.is_empty());
+    }
+
+    #[test]
+    fn a_negation_reaches_the_whole_single_valued_family() {
+        // Nier `works_at` doit atteindre `employer` : c'est la même affirmation
+        // sous deux noms, et c'est exactement la portée qu'aurait eue une
+        // nouvelle valeur.
+        let (facts, proposals) = negate(
+            &[("employer", "Acme", "c0")],
+            json!([{"entity_canonical": "Pierre", "predicate": "works_at", "value": "Acme"}]),
+        );
+        assert!(facts[0].1.is_some());
+        assert!(proposals.is_empty());
+    }
+
+    #[test]
+    fn a_value_the_memory_does_not_hold_is_queued_never_applied() {
+        // La capture nie Acme, la mémoire dit Globex. Les deux se contredisent
+        // sur CE QUI était vrai ; périmer Globex trancherait une contradiction
+        // que personne n'a regardée.
+        let (facts, proposals) = negate(
+            &[("works_at", "Globex", "c0")],
+            json!([{"entity_canonical": "Pierre", "predicate": "works_at", "value": "Acme"}]),
+        );
+        assert!(facts[0].1.is_none(), "le fait en mémoire ne doit pas bouger");
+        assert_eq!(proposals, vec!["valeur_differente".to_string()]);
+    }
+
+    #[test]
+    fn a_claim_denied_without_a_value_retires_all_of_its_values() {
+        // « il n'a plus de téléphone » ne nomme aucune valeur parce qu'il les
+        // nie toutes. Ce n'est pas une ambiguïté, c'est la portée de l'énoncé.
+        let (facts, proposals) = negate(
+            &[("phone", "06", "c0"), ("phone_number", "07", "c0")],
+            json!([{"entity_canonical": "Pierre", "predicate": "phone", "value": null}]),
+        );
+        assert!(facts[0].1.is_some() && facts[1].1.is_some());
+        assert!(proposals.is_empty());
+    }
+
+    #[test]
+    fn an_approximate_predicate_is_shown_never_acted_on() {
+        // Hors famille, `worked_at` et `works_at` ne se rejoignent que par la
+        // signature de SYN-190 — assez proche pour être montré, jamais assez
+        // pour agir. C'est le résidu que SYN-190 laisse, et la raison pour
+        // laquelle il bloquait ce ticket.
+        let (facts, proposals) = negate(
+            &[("supported_tagging", "manual", "c0")],
+            json!([{"entity_canonical": "Pierre", "predicate": "supports_tagging",
+                    "value": "manual"}]),
+        );
+        assert!(facts[0].1.is_none());
+        assert_eq!(proposals, vec!["approximatif".to_string()]);
+    }
+
+    #[test]
+    fn a_capture_never_negates_its_own_writes() {
+        // Le même texte peut poser une nouvelle valeur et retirer l'ancienne.
+        // Sans ce garde-fou, il retirerait celle qu'il vient d'écrire.
+        let (facts, proposals) = negate(
+            &[("works_at", "Acme", "c1")],
+            json!([{"entity_canonical": "Pierre", "predicate": "works_at", "value": "Acme"}]),
+        );
+        assert!(facts[0].1.is_none());
+        assert!(proposals.is_empty(), "et rien à arbitrer non plus");
+    }
+
+    #[test]
+    fn denying_something_about_an_unknown_entity_writes_nothing() {
+        // NEG-c : une négation ne crée jamais de nœud, et jamais de « fait
+        // négatif ». Silence est la bonne réponse.
+        let (facts, proposals) = negate(
+            &[("works_at", "Acme", "c0")],
+            json!([{"entity_canonical": "Marie", "predicate": "has_pet", "value": "chat"}]),
+        );
+        assert!(facts[0].1.is_none());
+        assert!(proposals.is_empty());
     }
 
     fn base_note(kind: &str) -> Value {

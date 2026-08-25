@@ -191,6 +191,26 @@ pub(crate) fn init_schema(conn: &Connection) -> Result<(), rusqlite::Error> {
             resolved_at         TIMESTAMP,
             resolved_predicate  TEXT
         )",
+        // ── SYN-189 — Fact negation, when the target is not certain ─────────
+        // A negation whose target is unambiguous is applied on the spot: the
+        // fact is obsoleted, and `POST /fact/{id}/restore` undoes it. This
+        // table holds the rest — several facts could be the one meant, the
+        // predicate only matches approximately, or nothing matches at all on
+        // an entity that does carry facts. Never merge knowledge on a guess,
+        // and never DROP knowledge on one either.
+        "CREATE TABLE IF NOT EXISTS fact_negation_proposals (
+            id                  TEXT PRIMARY KEY,
+            entity_id           TEXT NOT NULL REFERENCES entities(id),
+            predicate           TEXT NOT NULL,
+            value               TEXT,
+            reason              TEXT NOT NULL,
+            candidate_fact_ids  TEXT NOT NULL DEFAULT '[]',
+            evidence_capture_id TEXT REFERENCES inbox(id),
+            status              TEXT NOT NULL DEFAULT 'pending',
+            created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            resolved_at         TIMESTAMP,
+            resolved_fact_id    TEXT
+        )",
         // ── SYN-58 — Live entity-type vocabulary + proposals ────────────────
         "CREATE TABLE IF NOT EXISTS active_entity_types (
             type        TEXT PRIMARY KEY,
@@ -390,6 +410,8 @@ pub(crate) fn init_schema(conn: &Connection) -> Result<(), rusqlite::Error> {
          ON entity_merge_proposals(status, created_at DESC)",
         "CREATE INDEX IF NOT EXISTS idx_predicate_proposals_status \
          ON predicate_merge_proposals(status, created_at DESC)",
+        "CREATE INDEX IF NOT EXISTS idx_fact_negation_pending \
+         ON fact_negation_proposals(status, created_at DESC)",
         "CREATE INDEX IF NOT EXISTS idx_type_proposals_status \
          ON entity_type_proposals(status, created_at DESC)",
         "CREATE INDEX IF NOT EXISTS idx_project_attach_proposals_status \

@@ -45,6 +45,9 @@ Return ONLY valid JSON (no markdown):
   ],
   "project_entries": [
     {"project_canonical": "string", "content": "string (the excerpt relevant to THIS project, in the capture's language)", "is_new": true}
+  ],
+  "obsoleted_facts": [
+    {"entity_canonical": "string", "predicate": "string (English snake_case)", "value": "string or null"}
   ]
 }
 
@@ -92,6 +95,23 @@ predicate rules:
   predicate on a DIFFERENT entity, it is too specific: broaden it and move the specifics
   into `value`. "chess_club_membership_date" fits one person and one club and will never be
   used again; "member_since" says as much and still applies next month, to someone else.
+
+obsoleted_facts rules:
+- This is the ONLY way to say that something the memory may already hold has STOPPED being
+  true. Emit an item only when the capture MARKS a change or a correction: "ne travaille
+  plus chez Acme", "no longer lives in Lyon", "j'ai quitté mon poste", "en fait ce n'est pas
+  son numéro".
+- A plain absence stated for the first time ("Marie n'a pas de chat", "he has no car")
+  denies nothing and teaches nothing durable: emit NO fact and NO obsoleted_facts item.
+- A REPLACEMENT is not a negation. "Il a quitté Acme pour Globex" is one ordinary fact with
+  the new value — the memory retires the old one by itself. Only a claim left with NO
+  successor belongs here.
+- `value` names what stopped holding when the capture says it ("plus chez Acme" → "Acme");
+  use null when it does not ("il n'a plus de téléphone"), which retires the claim entirely.
+- Never put the same claim in both `facts` and `obsoleted_facts`.
+- If the capture only SUGGESTS the change ("je crois qu'il a quitté Acme"), leave it out:
+  hedge it in the note instead. Retiring knowledge on a maybe is worse than keeping it.
+- `obsoleted_facts: []` is the normal answer, and by far the most common one.
 
 persistence_value rules:
 5 = permanent (birth date, family tie, first name)
