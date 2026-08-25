@@ -38,6 +38,27 @@ const PROJECT_ATTACH_THRESHOLD_DEFAULT: f64 = 0.30;
 const PROJECT_ATTACH_MARGIN_DEFAULT: f64 = 0.03;
 const REVIEW_CONFIDENCE_THRESHOLD_DEFAULT: f64 = 0.7;
 
+/// SYN-190 — how close two predicate NAMES must embed to be worth proposing.
+///
+/// Measured 2026-08-24 on the real vocabulary, and the number is NOT the story:
+/// the two distributions overlap completely, so no threshold separates them.
+///
+/// ```text
+/// must never merge                     true synonyms
+/// interviewed_at ⇄ interviewed_by 0.955   is_cousin_of ⇄ cousin_of 0.970
+/// parent_of      ⇄ child_of       0.817   phone_number ⇄ phone     0.761
+/// sibling_of     ⇄ cousin_of      0.765   works_as     ⇄ works_at  0.696
+/// son_of         ⇄ daughter_of    0.589   family_relation ⇄ sibling_of 0.598
+/// ```
+///
+/// `parent_of` and `child_of` are INVERSES: that merge would flip the direction
+/// of the graph. So embedding a predicate name is NOT a usable general proposer,
+/// and the pass below restricts it to single-valued families only — where a
+/// synonym is a genuine bug (it breaks supersede) and where the relation-inverse
+/// minefield does not exist, since relations have no families. Restricted that
+/// way it yields 6 proposals over 91 predicates, all of them defensible.
+const PREDICATE_MERGE_THRESHOLD_DEFAULT: f64 = 0.65;
+
 /// Predicates that hold at most one live value, grouped by the claim they
 /// make. A new value supersedes the previous one across the whole family:
 /// `birthday` and `has_birthday` are one claim under two names, and letting
@@ -123,6 +144,31 @@ pub struct ProjectSynthesis {
     pub entry_count: i64,
 }
 
+/// SYN-189 — what the capture's negations actually did.
+///
+/// Kept on the report rather than left implicit because the failure this
+/// feature exists to avoid is a SILENT one: a capture saying something is no
+/// longer true, and the memory doing nothing about it without ever saying so.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct NegationOutcome {
+    /// Target certain, fact obsoleted on the spot (reversible).
+    pub applied: i64,
+    /// Target not certain: an arbitration is waiting in the queue.
+    pub proposed: i64,
+    /// Nothing to negate — unknown entity, or one carrying no facts at all.
+    pub unmatched: i64,
+}
+
+/// What one `obsoleted_facts` item ended up doing.
+enum NegationVerdict {
+    /// N live facts retired (reversibly).
+    Applied(i64),
+    /// Target not certain — an arbitration is queued instead.
+    Proposed,
+    /// Nothing on file to retire; correctly a no-op.
+    Nothing,
+}
+
 #[derive(Debug, Default)]
 pub struct RouteReport {
     pub entity_ids: Vec<String>,
@@ -132,6 +178,7 @@ pub struct RouteReport {
     pub created_note_id: Option<String>,
     pub project_syntheses: Vec<ProjectSynthesis>,
     pub fast_exit: bool,
+    pub negations: NegationOutcome,
 }
 
 /// The routing brain: storage + (optionally) the embedder that powers the
@@ -293,6 +340,14 @@ impl Brain {
                 report.entity_ids =
                     self.step4_route(&conn, classified, resolved, capture_id, durable_note, ctx)?;
             }
+
+            // SYN-189 — OUTSIDE the `resolved` guard on purpose. A capture whose
+            // whole point is a negation ("Pierre ne travaille plus chez Acme")
+            // may teach nothing new and come back with `entities: []`, which
+            // leaves `resolved` at None. Nesting this inside would make the pure
+            // negation — the very case the feature exists for — the one case it
+            // never runs on.
+            report.negations = self.apply_negations(&conn, classified, capture_id)?;
 
             // Atomic note (SYN-56/58/85 gates).
             let mut created_note_id: Option<String> = None;
@@ -472,6 +527,11 @@ impl Brain {
             "new_facts": report.new_facts,
             "created_note_id": report.created_note_id,
             "fast_exit": report.fast_exit,
+            "negations": {
+                "applied": report.negations.applied,
+                "proposed": report.negations.proposed,
+                "unmatched": report.negations.unmatched,
+            },
             "project_syntheses": report.project_syntheses.iter().map(|s| json!({
                 "project_id": s.project_id,
                 "entry_id": s.entry_id,
@@ -817,6 +877,22 @@ impl Brain {
                         source_inbox_id,
                     )?;
                 }
+                // SYN-188 — un renommage déclaré en capture PROPOSE, il
+                // n'applique pas. Réservé aux entités DÉJÀ connues : sur une
+                // entité que cette capture vient de créer, il n'y a rien à
+                // renommer, elle porte déjà le nom qu'on lui a donné.
+                if existing.is_some() {
+                    if let Some(nouveau) = entity_data
+                        .get("renamed_to")
+                        .and_then(Value::as_str)
+                        .map(str::trim)
+                        .filter(|n| !n.is_empty() && !n.eq_ignore_ascii_case(&canonical))
+                    {
+                        record_rename_proposal(
+                            conn, &id, &canonical, nouveau, source_inbox_id,
+                        )?;
+                    }
+                }
                 entity_id = Some(id);
             }
 
@@ -904,7 +980,371 @@ impl Brain {
             }
         }
 
+        // SYN-190 — après TOUTES les écritures, jamais pendant.
+        self.propose_predicate_merges(conn, classified, source_inbox_id)?;
+
         Ok(entity_ids)
+    }
+
+    // ── SYN-189 — fact negation ─────────────────────────────────────────
+
+    /// Apply what the capture says has STOPPED being true.
+    ///
+    /// A negation is the SYN-37 supersede without a successor: the same
+    /// machinery, minus the new value. It never deletes. `obsoleted_at` is set
+    /// and `obsoleted_by` stays NULL — nothing replaced the fact, it simply
+    /// ceased — and `POST /fact/{id}/restore` puts it back. That reversibility
+    /// is the whole reason applying on the spot is defensible at all.
+    ///
+    /// On the spot ONLY when the target is certain. Everything else becomes a
+    /// proposal, because the mistake available to this pass is to hide a true
+    /// fact, and a hidden fact is not something anyone notices is missing.
+    fn apply_negations(
+        &self,
+        conn: &Connection,
+        classified: &Value,
+        capture_id: &str,
+    ) -> Result<NegationOutcome, CoreError> {
+        let mut out = NegationOutcome::default();
+        for item in arr(classified.get("obsoleted_facts")) {
+            let canonical = item
+                .get("entity_canonical")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .trim()
+                .to_string();
+            let predicate = item
+                .get("predicate")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .trim()
+                .to_string();
+            if canonical.is_empty() || predicate.is_empty() {
+                continue;
+            }
+            // An absent value and an empty one say the same thing here: the
+            // capture named the claim, not which of its values it meant.
+            let value = item
+                .get("value")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|v| !v.is_empty())
+                .map(String::from);
+            match self.negate_one(conn, &canonical, &predicate, value.as_deref(), capture_id)? {
+                NegationVerdict::Applied(n) => out.applied += n,
+                NegationVerdict::Proposed => out.proposed += 1,
+                NegationVerdict::Nothing => out.unmatched += 1,
+            }
+        }
+        Ok(out)
+    }
+
+    fn negate_one(
+        &self,
+        conn: &Connection,
+        canonical: &str,
+        predicate: &str,
+        value: Option<&str>,
+        capture_id: &str,
+    ) -> Result<NegationVerdict, CoreError> {
+        let entity_id = match find_existing_entity(conn, canonical, &[])?
+            .and_then(|row| row.get("id").and_then(Value::as_str).map(String::from))
+        {
+            Some(id) => id,
+            // Nothing was ever recorded about this entity, so nothing about it
+            // can have stopped being true. A negation NEVER creates a node, and
+            // never writes a "negative fact" (SYN-189): silence is the answer.
+            None => return Ok(NegationVerdict::Nothing),
+        };
+
+        // Every live fact on the entity, minus what THIS capture just wrote: a
+        // capture does not get to negate its own writes, and the same text can
+        // legitimately state a new value and retire an old one.
+        let live: Vec<(String, String, String)> = {
+            let mut stmt = conn.prepare(
+                "SELECT id, LOWER(TRIM(predicate)), LOWER(TRIM(value)) FROM facts \
+                 WHERE entity_id = ?1 AND obsoleted_at IS NULL AND archived_at IS NULL \
+                 AND COALESCE(provenance_capture_id, '') <> ?2",
+            )?;
+            let rows = stmt
+                .query_map(params![entity_id, capture_id], |r| {
+                    Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+            rows
+        };
+        if live.is_empty() {
+            return Ok(NegationVerdict::Nothing);
+        }
+
+        // The CLAIM, not the word. Negating `works_at` has to reach `employer`
+        // too — exactly the reach a new value would have had through supersede.
+        // Outside a family the predicate is taken literally, which is the
+        // residual SYN-190 leaves behind and the reason it blocked this ticket.
+        let family: Vec<String> = match single_valued_family(predicate) {
+            Some(f) => f.iter().map(|p| (*p).to_string()).collect(),
+            None => vec![predicate.trim().to_lowercase()],
+        };
+        let on_predicate: Vec<(String, String, String)> = live
+            .iter()
+            .filter(|(_, p, _)| family.iter().any(|f| f == p))
+            .cloned()
+            .collect();
+
+        if on_predicate.is_empty() {
+            // SYN-190's signature, reused as a LAST resort: `worked_at` against
+            // `works_at` outside any family. Close enough to be worth showing,
+            // never close enough to act on — that is the same measurement that
+            // stops the predicate pass from merging on its own authority.
+            let sig = Self::predicate_signature(predicate);
+            let near: Vec<String> = live
+                .iter()
+                .filter(|(_, p, _)| Self::predicate_signature(p) == sig)
+                .map(|(id, _, _)| id.clone())
+                .collect();
+            let reason = if near.is_empty() { "introuvable" } else { "approximatif" };
+            record_negation_proposal(
+                conn, &entity_id, predicate, value, reason, &near, capture_id,
+            )?;
+            return Ok(NegationVerdict::Proposed);
+        }
+
+        let targets: Vec<String> = match value {
+            Some(v) => {
+                let needle = v.trim().to_lowercase();
+                on_predicate
+                    .iter()
+                    .filter(|(_, _, val)| *val == needle)
+                    .map(|(id, _, _)| id.clone())
+                    .collect()
+            }
+            // No value named means the whole claim stopped holding ("il n'a
+            // plus de téléphone"). Retiring every live value of that claim IS
+            // the certain reading, not an ambiguous one.
+            None => on_predicate.iter().map(|(id, _, _)| id.clone()).collect(),
+        };
+
+        if targets.is_empty() {
+            // The claim is on file, the value is not: the capture and the
+            // memory disagree about WHAT was true. Retiring the stored value
+            // would be settling a contradiction we have not looked at.
+            let candidates: Vec<String> =
+                on_predicate.iter().map(|(id, _, _)| id.clone()).collect();
+            record_negation_proposal(
+                conn,
+                &entity_id,
+                predicate,
+                value,
+                "valeur_differente",
+                &candidates,
+                capture_id,
+            )?;
+            return Ok(NegationVerdict::Proposed);
+        }
+
+        for fact_id in &targets {
+            conn.execute(
+                "UPDATE facts SET obsoleted_at = CURRENT_TIMESTAMP WHERE id = ?1",
+                params![fact_id],
+            )?;
+        }
+        conn.execute(
+            "UPDATE entities SET summary_stale = 1 WHERE id = ?1",
+            params![entity_id],
+        )?;
+        Ok(NegationVerdict::Applied(targets.len() as i64))
+    }
+
+    // ── SYN-190 — predicate reconciliation ──────────────────────────────
+
+    /// The comparable form of a predicate: empty affixes stripped, verbs cut back
+    /// to a stem, words sorted. `is_cousin_of` and `cousin_of` collapse onto the
+    /// same signature, `worked_at` and `works_at` too.
+    ///
+    /// Deliberately timid. An aggressive stemmer would fuse `born_on` with
+    /// `borrows`, and a wrong merge costs far more than a surviving duplicate.
+    /// It is also why the embedding pass below exists: the signature MISSES
+    /// `works_as` → `works_at`, measured, and that is the flagship case.
+    fn predicate_signature(predicate: &str) -> String {
+        let mut p = predicate.trim().to_lowercase();
+        for pre in ["is_", "has_", "was_", "were_"] {
+            if let Some(rest) = p.strip_prefix(pre) {
+                p = rest.to_string();
+                break;
+            }
+        }
+        for suf in ["_of", "_to", "_for"] {
+            if let Some(rest) = p.strip_suffix(suf) {
+                p = rest.to_string();
+                break;
+            }
+        }
+        let mut mots: Vec<String> = Vec::new();
+        for m in p.split('_') {
+            if m.is_empty() || matches!(m, "the" | "a" | "an") {
+                continue;
+            }
+            let mut m = m.to_string();
+            for term in ["ing", "ed", "es", "s"] {
+                if m.len() > 4 && m.ends_with(term) {
+                    m.truncate(m.len() - term.len());
+                    break;
+                }
+            }
+            mots.push(m);
+        }
+        mots.sort();
+        mots.join(" ")
+    }
+
+    /// Two predicates differing by exactly ONE token IN THE SAME POSITION are not
+    /// synonyms — they are one claim carrying two different values
+    /// (`supports_manual_tagging` / `supports_automatic_tagging`,
+    /// `is_primary_channel_for` / `is_secondary_channel_for`). Merging them would
+    /// DESTROY information, yet this is precisely the family the embedding scores
+    /// highest: 0.92 on the pair above, measured 2026-08-24. So it is filtered out
+    /// before it can ever reach the queue.
+    ///
+    /// The right repair for them is to widen the predicate and move the odd word
+    /// into `value` — a rewrite, not a merge, and one that only holds when the
+    /// value slot is free. `scripts/predicats.py` proposes those separately.
+    fn is_sibling_pair(a: &str, b: &str) -> bool {
+        let (ta, tb): (Vec<&str>, Vec<&str>) = (a.split('_').collect(), b.split('_').collect());
+        if ta.len() != tb.len() || ta.len() < 3 {
+            return false;
+        }
+        ta.iter().zip(tb.iter()).filter(|(x, y)| x != y).count() == 1
+    }
+
+    /// A predicate this capture used for the FIRST time, compared to those already
+    /// in use. Runs after every fact and relation is written, never inside
+    /// `insert_fact`: that one executes inside the caller's open transaction while
+    /// the embedder writes on the core's own connection, which is the documented
+    /// SQLITE_BUSY trap.
+    ///
+    /// It only ever PROPOSES. Accepting a merge toward a single-valued family head
+    /// (`works_as` → `works_at`) triggers the SYN-37 supersede and obsoletes the
+    /// previous fact: doing that unattended would delete knowledge in silence.
+    fn propose_predicate_merges(
+        &self,
+        conn: &Connection,
+        classified: &Value,
+        capture_id: &str,
+    ) -> Result<(), CoreError> {
+        let mut vus: HashSet<(String, String)> = HashSet::new();
+        for entity in arr(classified.get("entities")) {
+            for fact in arr(entity.get("facts")) {
+                if let Some(p) = fact.get("predicate").and_then(Value::as_str) {
+                    vus.insert(("fact".to_string(), p.trim().to_lowercase()));
+                }
+            }
+        }
+        for rel in arr(classified.get("relations")) {
+            if let Some(p) = rel.get("predicate").and_then(Value::as_str) {
+                vus.insert(("relation".to_string(), p.trim().to_lowercase()));
+            }
+        }
+
+        let seuil = env_f64(
+            "SYNAPSE_PREDICATE_MERGE_THRESHOLD",
+            PREDICATE_MERGE_THRESHOLD_DEFAULT,
+        );
+        for (kind, predicate) in vus {
+            if predicate.is_empty() {
+                continue;
+            }
+            let table = if kind == "fact" { "facts" } else { "relations" };
+            // Inédit = aucune autre capture ne l'a jamais employé. Sans ce garde,
+            // chaque capture rejouerait la comparaison sur tout le vocabulaire.
+            let ailleurs: i64 = conn.query_row(
+                &format!(
+                    "SELECT COUNT(*) FROM {table} WHERE predicate = ?1 \
+                     AND COALESCE(provenance_capture_id, '') <> ?2"
+                ),
+                params![predicate, capture_id],
+                |r| r.get(0),
+            )?;
+            if ailleurs > 0 {
+                continue;
+            }
+            self.propose_one_predicate(conn, &kind, table, &predicate, capture_id, seuil)?;
+        }
+        Ok(())
+    }
+
+    fn propose_one_predicate(
+        &self,
+        conn: &Connection,
+        kind: &str,
+        table: &str,
+        predicate: &str,
+        capture_id: &str,
+        seuil: f64,
+    ) -> Result<(), CoreError> {
+        let sql = format!(
+            "SELECT DISTINCT predicate FROM {table} \
+             WHERE predicate IS NOT NULL AND predicate <> ?1"
+        );
+        let mut stmt = conn.prepare(&sql)?;
+        let voisins: Vec<String> = stmt
+            .query_map(params![predicate], |r| r.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        drop(stmt);
+        if voisins.is_empty() {
+            return Ok(());
+        }
+
+        // 1. Signature lexicale — précise, gratuite, mais faible en rappel.
+        let sig = Self::predicate_signature(predicate);
+        for v in &voisins {
+            if Self::predicate_signature(v) == sig {
+                return record_predicate_proposal(
+                    conn, kind, predicate, v, 0.95, "signature", capture_id,
+                );
+            }
+        }
+
+        // 2. Rattrapage sémantique, RESTREINT AUX FAMILLES MONO-VALUÉES.
+        //
+        // C'est ce qui attrape `works_as` → `works_at`, que la signature rate. Et
+        // c'est volontairement tout ce qu'il attrape : hors des familles, la
+        // ressemblance des noms ne distingue pas un synonyme d'un inverse (voir
+        // la mesure sur PREDICATE_MERGE_THRESHOLD_DEFAULT). Ici l'enjeu est net —
+        // un synonyme d'une tête de famille CASSE le supersede, donc chaque
+        // proposition répare un bug réel plutôt que d'exprimer un goût.
+        if single_valued_family(predicate).is_some() {
+            return Ok(()); // déjà dans une famille : rien à réconcilier
+        }
+        let Ok(cible) = self.embed_text(&predicate.replace('_', " ")) else {
+            return Ok(()); // embed indisponible → on saute, comme la fusion d'entités
+        };
+        let mut meilleur: Option<(f64, &'static str)> = None;
+        for v in &voisins {
+            let Some(famille) = single_valued_family(v) else {
+                continue;
+            };
+            if Self::is_sibling_pair(predicate, v) {
+                continue;
+            }
+            let Ok(vv) = self.embed_text(&v.replace('_', " ")) else {
+                continue;
+            };
+            let score: f64 = cible
+                .iter()
+                .zip(vv.iter())
+                .map(|(x, y)| (*x as f64) * (*y as f64))
+                .sum();
+            // La cible est la TÊTE de la famille, jamais le membre rencontré :
+            // c'est elle que `insert_fact` sait périmer.
+            if score >= seuil && meilleur.map_or(true, |(s, _)| score > s) {
+                meilleur = Some((score, famille[0]));
+            }
+        }
+        if let Some((score, tete)) = meilleur {
+            let reason = format!("famille_{score:.2}");
+            record_predicate_proposal(conn, kind, predicate, tete, score, &reason, capture_id)?;
+        }
+        Ok(())
     }
 
     // ── merge + attach proposals ────────────────────────────────────────
@@ -1335,6 +1775,118 @@ fn upsert_entity(
         )?;
         Ok(entity_id)
     }
+}
+
+/// SYN-188 — park a rename declared by a capture.
+///
+/// Idempotent on (entity, proposed name) while pending: the same capture
+/// replayed, or the rename declared twice before anyone confirms, must not
+/// stack two identical questions.
+fn record_rename_proposal(
+    conn: &Connection,
+    entity_id: &str,
+    current_name: &str,
+    proposed_name: &str,
+    capture_id: &str,
+) -> Result<(), CoreError> {
+    let already: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM entity_rename_proposals \
+         WHERE entity_id = ?1 AND LOWER(TRIM(proposed_name)) = LOWER(TRIM(?2)) \
+         AND status = 'pending'",
+        params![entity_id, proposed_name],
+        |r| r.get(0),
+    )?;
+    if already > 0 {
+        return Ok(());
+    }
+    conn.execute(
+        "INSERT INTO entity_rename_proposals \
+         (id, entity_id, current_name, proposed_name, evidence_capture_id) \
+         VALUES (?1,?2,?3,?4,?5)",
+        params![new_uuid(), entity_id, current_name, proposed_name, capture_id],
+    )?;
+    Ok(())
+}
+
+/// SYN-189 — park a negation whose target is not certain.
+///
+/// Idempotent on (entity, predicate, value) while pending: the same capture
+/// replayed, or the same claim denied twice before anyone arbitrates, must not
+/// stack two identical questions in the queue.
+#[allow(clippy::too_many_arguments)]
+fn record_negation_proposal(
+    conn: &Connection,
+    entity_id: &str,
+    predicate: &str,
+    value: Option<&str>,
+    reason: &str,
+    candidate_fact_ids: &[String],
+    capture_id: &str,
+) -> Result<(), CoreError> {
+    let already: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM fact_negation_proposals \
+         WHERE entity_id = ?1 AND LOWER(TRIM(predicate)) = LOWER(TRIM(?2)) \
+         AND COALESCE(LOWER(TRIM(value)), '') = COALESCE(LOWER(TRIM(?3)), '') \
+         AND status = 'pending'",
+        params![entity_id, predicate, value],
+        |r| r.get(0),
+    )?;
+    if already > 0 {
+        return Ok(());
+    }
+    conn.execute(
+        "INSERT INTO fact_negation_proposals \
+         (id, entity_id, predicate, value, reason, candidate_fact_ids, evidence_capture_id) \
+         VALUES (?1,?2,?3,?4,?5,?6,?7)",
+        params![
+            new_uuid(),
+            entity_id,
+            predicate,
+            value,
+            reason,
+            serde_json::to_string(candidate_fact_ids).unwrap_or_else(|_| "[]".to_string()),
+            capture_id
+        ],
+    )?;
+    Ok(())
+}
+
+fn record_predicate_proposal(
+    conn: &Connection,
+    kind: &str,
+    candidate: &str,
+    existing: &str,
+    score: f64,
+    reason: &str,
+    capture_id: &str,
+) -> Result<(), CoreError> {
+    // La DIRECTION compte. Si l'un des deux est tête d'une famille mono-valuée,
+    // c'est lui la cible : ramener un synonyme vers la tête RÉPARE le supersede,
+    // l'inverse le casserait définitivement.
+    let (candidate, existing) = if single_valued_family(candidate).is_some()
+        && single_valued_family(existing).is_none()
+    {
+        (existing, candidate)
+    } else {
+        (candidate, existing)
+    };
+    let exists: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM predicate_merge_proposals \
+         WHERE kind = ?1 AND ((candidate_predicate=?2 AND existing_predicate=?3) \
+                           OR (candidate_predicate=?3 AND existing_predicate=?2))",
+        params![kind, candidate, existing],
+        |r| r.get(0),
+    )?;
+    if exists > 0 {
+        return Ok(());
+    }
+    conn.execute(
+        "INSERT INTO predicate_merge_proposals \
+         (id, kind, candidate_predicate, existing_predicate, similarity_score, \
+          similarity_reason, evidence_capture_id) VALUES (?1,?2,?3,?4,?5,?6,?7)",
+        params![new_uuid(), kind, candidate, existing, score, reason, capture_id],
+    )?;
+    Ok(())
 }
 
 fn record_merge_proposal(
@@ -1903,6 +2455,77 @@ fn add_days_iso(date: &str, days: i64) -> String {
 mod tests {
     use super::*;
 
+    // ── SYN-190 ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn signature_collapses_empty_affixes_and_tense() {
+        let sig = Brain::predicate_signature;
+        assert_eq!(sig("is_cousin_of"), sig("cousin_of"));
+        assert_eq!(sig("worked_at"), sig("works_at"));
+        assert_eq!(sig("has_birthday"), sig("birthday"));
+        // Et ce qu'elle NE fusionne PAS : deux prépositions différentes font deux
+        // affirmations différentes, et c'est justement le cas que l'embedding doit
+        // rattraper (`works_as` → `works_at`), pas la signature.
+        assert_ne!(sig("works_as"), sig("works_at"));
+        // Un stemmer trop gourmand casserait celui-ci.
+        assert_ne!(sig("born_on"), sig("borrows"));
+    }
+
+    #[test]
+    fn sibling_pairs_are_never_a_merge() {
+        // Un mot qui diffère à la MÊME place : une affirmation, deux valeurs.
+        // Les fusionner détruirait l'information, et c'est pourtant la paire que
+        // l'embedding note le plus haut (0,92 mesuré le 2026-08-24).
+        assert!(Brain::is_sibling_pair(
+            "supports_manual_tagging",
+            "supports_automatic_tagging"
+        ));
+        assert!(Brain::is_sibling_pair(
+            "is_primary_channel_for",
+            "is_secondary_channel_for"
+        ));
+        // Deux vrais synonymes ne sont PAS des jumeaux : ils doivent passer.
+        assert!(!Brain::is_sibling_pair("works_as", "works_at"));
+        assert!(!Brain::is_sibling_pair("profession", "job_title"));
+    }
+
+    #[test]
+    fn proposal_points_toward_the_family_head() {
+        // La direction décide si accepter la proposition RÉPARE le supersede ou
+        // le casse pour de bon. `works_at` est tête de famille, `works_as` non :
+        // la cible doit être la tête, quel que soit l'ordre d'appel.
+        // Table créée à la main : `init_schema` monte tout le schéma, y compris
+        // les tables virtuelles vec0 que ce test n'a pas et dont il n'a pas besoin.
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE predicate_merge_proposals (
+                id TEXT PRIMARY KEY, kind TEXT, candidate_predicate TEXT,
+                existing_predicate TEXT, similarity_score REAL,
+                similarity_reason TEXT, evidence_capture_id TEXT,
+                status TEXT DEFAULT 'pending')",
+        )
+        .unwrap();
+        record_predicate_proposal(&conn, "fact", "works_at", "works_as", 0.93, "t", "c1")
+            .unwrap();
+        let (cand, exist): (String, String) = conn
+            .query_row(
+                "SELECT candidate_predicate, existing_predicate \
+                 FROM predicate_merge_proposals",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!((cand.as_str(), exist.as_str()), ("works_as", "works_at"));
+
+        // Idempotent dans les deux sens : la même paire ne fait pas deux lignes.
+        record_predicate_proposal(&conn, "fact", "works_as", "works_at", 0.93, "t", "c2")
+            .unwrap();
+        let n: i64 = conn
+            .query_row("SELECT COUNT(*) FROM predicate_merge_proposals", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 1);
+    }
+
     #[test]
     fn confidence_matches_python_formula() {
         // explicit, new entity, mention 1, persistence 3: 0.92 + 0.02 + 0.05
@@ -2068,6 +2691,243 @@ mod tests {
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
         )
         .unwrap()
+    }
+
+    // ── SYN-188 — renommage déclaré en capture ──────────────────────────
+
+    /// Route une capture qui déclare un renommage, sur une base où l'entité
+    /// existe déjà ou non. Rend (nom canonique après coup, propositions).
+    fn renommer(entite_existe: bool, canonical: &str, renamed_to: Value)
+        -> (String, Vec<(String, String)>) {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("s.db");
+        let brain = Brain::open(db.to_str().unwrap(), None).unwrap();
+        {
+            let conn = brain.storage.lock().unwrap();
+            conn.execute("INSERT INTO inbox (id, content) VALUES ('c1','x')", []).unwrap();
+            if entite_existe {
+                conn.execute(
+                    "INSERT INTO entities (id, type, canonical_name, aliases, mention_count) \
+                     VALUES ('e1','project',?1,'[]',3)",
+                    params![canonical],
+                ).unwrap();
+            }
+        }
+        let mut classified = base_note("note");
+        classified["entities"] = json!([{
+            "canonical_name": canonical, "type": "project", "renamed_to": renamed_to,
+            "facts": [{"predicate": "is_in_phase", "value": "test",
+                       "persistence_value": 4, "evidence_strength": "explicit"}]
+        }]);
+        let ctx = RouteContext {
+            now: "2026-08-25T12:00:00".into(),
+            today: "2026-08-25".into(),
+            intentions_cutoff: "2026-08-23T12:00:00".into(),
+            now_sql: "2026-08-25 12:00:00".into(),
+        };
+        brain
+            .route_capture(&json!({"id": "c1", "content": "x"}), &classified, &ctx)
+            .unwrap();
+        let conn = brain.storage.lock().unwrap();
+        let nom: String = conn
+            .query_row("SELECT canonical_name FROM entities LIMIT 1", [], |r| r.get(0))
+            .unwrap();
+        let props = {
+            let mut stmt = conn
+                .prepare("SELECT current_name, proposed_name FROM entity_rename_proposals")
+                .unwrap();
+            let rows = stmt
+                .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+                .unwrap()
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap();
+            rows
+        };
+        (nom, props)
+    }
+
+    #[test]
+    fn a_declared_rename_proposes_and_never_applies() {
+        // Le nom canonique titre la fiche, sort dans le digest et remonte en
+        // recherche : c'est le nom que l'utilisateur LIT comme étant sa mémoire.
+        // Un modèle ne le change pas.
+        let (nom, props) = renommer(true, "Synapse", json!("Sinam"));
+        assert_eq!(nom, "Synapse", "le nom canonique ne doit PAS avoir bougé");
+        assert_eq!(props, vec![("Synapse".to_string(), "Sinam".to_string())]);
+    }
+
+    #[test]
+    fn a_rename_toward_the_same_name_proposes_nothing() {
+        // Une variante de casse n'est pas un renommage. Sans ce garde-fou, la
+        // file se remplirait de questions qui ne changent rien.
+        let (_, props) = renommer(true, "Synapse", json!("synapse"));
+        assert!(props.is_empty());
+    }
+
+    #[test]
+    fn a_brand_new_entity_is_never_renamed() {
+        // Elle porte déjà le nom qu'on vient de lui donner : il n'y a rien à
+        // renommer, et proposer reviendrait à demander d'arbitrer une capture
+        // contre elle-même.
+        let (_, props) = renommer(false, "Atlas", json!("Atlas v2"));
+        assert!(props.is_empty());
+    }
+
+    // ── SYN-189 — négation d'un fait ────────────────────────────────────
+
+    /// Sème une entité et ses faits vivants, puis route une capture qui ne fait
+    /// QUE nier. `entities: []` est volontaire : c'est la forme d'une capture
+    /// dont toute la charge est la négation, et celle où la passe doit tourner
+    /// alors même que `step4_route` ne s'exécute pas.
+    /// Un fait tel que le test le relit : prédicat, péremption, successeur.
+    type FactRow = (String, Option<String>, Option<String>);
+
+    fn negate(seed: &[(&str, &str, &str)], obsoleted: Value) -> (Vec<FactRow>, Vec<String>) {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("s.db");
+        let brain = Brain::open(db.to_str().unwrap(), None).unwrap();
+        {
+            let conn = brain.storage.lock().unwrap();
+            conn.execute("INSERT INTO inbox (id, content) VALUES ('c1','x')", []).unwrap();
+            conn.execute(
+                "INSERT INTO entities (id, type, canonical_name) VALUES ('e1','person','Pierre')",
+                [],
+            ).unwrap();
+            for (i, (pred, val, prov)) in seed.iter().enumerate() {
+                conn.execute(
+                    "INSERT INTO facts \
+                     (id, entity_id, predicate, value, confidence, provenance_capture_id) \
+                     VALUES (?1,'e1',?2,?3,1.0,?4)",
+                    params![format!("f{i}"), pred, val, prov],
+                ).unwrap();
+            }
+        }
+        let mut classified = base_note("note");
+        classified["obsoleted_facts"] = obsoleted;
+        let ctx = RouteContext {
+            now: "2026-08-25T12:00:00".into(),
+            today: "2026-08-25".into(),
+            intentions_cutoff: "2026-08-23T12:00:00".into(),
+            now_sql: "2026-08-25 12:00:00".into(),
+        };
+        brain
+            .route_capture(&json!({"id": "c1", "content": "x"}), &classified, &ctx)
+            .unwrap();
+        let conn = brain.storage.lock().unwrap();
+        let facts = {
+            let mut stmt = conn
+                .prepare("SELECT predicate, obsoleted_at, obsoleted_by FROM facts ORDER BY id")
+                .unwrap();
+            let rows = stmt
+                .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+                .unwrap()
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap();
+            rows
+        };
+        let proposals = {
+            let mut stmt = conn
+                .prepare("SELECT reason FROM fact_negation_proposals ORDER BY rowid")
+                .unwrap();
+            let rows = stmt
+                .query_map([], |r| r.get(0))
+                .unwrap()
+                .collect::<Result<Vec<String>, _>>()
+                .unwrap();
+            rows
+        };
+        (facts, proposals)
+    }
+
+    #[test]
+    fn a_certain_negation_retires_the_fact_without_a_successor() {
+        // `obsoleted_by` doit rester NULL : rien n'a remplacé ce fait, il a
+        // cessé. C'est ce qui distingue une négation d'un supersede SYN-37, et
+        // c'est ce que lit `/fact/{id}/restore` pour le rappeler.
+        let (facts, proposals) = negate(
+            &[("works_at", "Acme", "c0")],
+            json!([{"entity_canonical": "Pierre", "predicate": "works_at", "value": "Acme"}]),
+        );
+        assert!(facts[0].1.is_some(), "le fait devait être périmé");
+        assert!(facts[0].2.is_none(), "aucun successeur ne doit être inscrit");
+        assert!(proposals.is_empty());
+    }
+
+    #[test]
+    fn a_negation_reaches_the_whole_single_valued_family() {
+        // Nier `works_at` doit atteindre `employer` : c'est la même affirmation
+        // sous deux noms, et c'est exactement la portée qu'aurait eue une
+        // nouvelle valeur.
+        let (facts, proposals) = negate(
+            &[("employer", "Acme", "c0")],
+            json!([{"entity_canonical": "Pierre", "predicate": "works_at", "value": "Acme"}]),
+        );
+        assert!(facts[0].1.is_some());
+        assert!(proposals.is_empty());
+    }
+
+    #[test]
+    fn a_value_the_memory_does_not_hold_is_queued_never_applied() {
+        // La capture nie Acme, la mémoire dit Globex. Les deux se contredisent
+        // sur CE QUI était vrai ; périmer Globex trancherait une contradiction
+        // que personne n'a regardée.
+        let (facts, proposals) = negate(
+            &[("works_at", "Globex", "c0")],
+            json!([{"entity_canonical": "Pierre", "predicate": "works_at", "value": "Acme"}]),
+        );
+        assert!(facts[0].1.is_none(), "le fait en mémoire ne doit pas bouger");
+        assert_eq!(proposals, vec!["valeur_differente".to_string()]);
+    }
+
+    #[test]
+    fn a_claim_denied_without_a_value_retires_all_of_its_values() {
+        // « il n'a plus de téléphone » ne nomme aucune valeur parce qu'il les
+        // nie toutes. Ce n'est pas une ambiguïté, c'est la portée de l'énoncé.
+        let (facts, proposals) = negate(
+            &[("phone", "06", "c0"), ("phone_number", "07", "c0")],
+            json!([{"entity_canonical": "Pierre", "predicate": "phone", "value": null}]),
+        );
+        assert!(facts[0].1.is_some() && facts[1].1.is_some());
+        assert!(proposals.is_empty());
+    }
+
+    #[test]
+    fn an_approximate_predicate_is_shown_never_acted_on() {
+        // Hors famille, `worked_at` et `works_at` ne se rejoignent que par la
+        // signature de SYN-190 — assez proche pour être montré, jamais assez
+        // pour agir. C'est le résidu que SYN-190 laisse, et la raison pour
+        // laquelle il bloquait ce ticket.
+        let (facts, proposals) = negate(
+            &[("supported_tagging", "manual", "c0")],
+            json!([{"entity_canonical": "Pierre", "predicate": "supports_tagging",
+                    "value": "manual"}]),
+        );
+        assert!(facts[0].1.is_none());
+        assert_eq!(proposals, vec!["approximatif".to_string()]);
+    }
+
+    #[test]
+    fn a_capture_never_negates_its_own_writes() {
+        // Le même texte peut poser une nouvelle valeur et retirer l'ancienne.
+        // Sans ce garde-fou, il retirerait celle qu'il vient d'écrire.
+        let (facts, proposals) = negate(
+            &[("works_at", "Acme", "c1")],
+            json!([{"entity_canonical": "Pierre", "predicate": "works_at", "value": "Acme"}]),
+        );
+        assert!(facts[0].1.is_none());
+        assert!(proposals.is_empty(), "et rien à arbitrer non plus");
+    }
+
+    #[test]
+    fn denying_something_about_an_unknown_entity_writes_nothing() {
+        // NEG-c : une négation ne crée jamais de nœud, et jamais de « fait
+        // négatif ». Silence est la bonne réponse.
+        let (facts, proposals) = negate(
+            &[("works_at", "Acme", "c0")],
+            json!([{"entity_canonical": "Marie", "predicate": "has_pet", "value": "chat"}]),
+        );
+        assert!(facts[0].1.is_none());
+        assert!(proposals.is_empty());
     }
 
     fn base_note(kind: &str) -> Value {

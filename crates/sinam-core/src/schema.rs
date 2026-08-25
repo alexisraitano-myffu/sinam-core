@@ -171,6 +171,61 @@ pub(crate) fn init_schema(conn: &Connection) -> Result<(), rusqlite::Error> {
             resolved_at           TIMESTAMP,
             resolved_canonical_id TEXT REFERENCES entities(id)
         )",
+        // ── SYN-190 — Predicate reconciliation queue ────────────────────────
+        // Entity types are a closed vocabulary, so they are governed by a list.
+        // Predicates are open by nature — a fact can be of a genuinely new kind —
+        // so they are governed AFTER the fact instead: a predicate seen for the
+        // first time is compared to those already in use, and a near-duplicate
+        // becomes a proposal. Same shape as `entity_merge_proposals`, one level
+        // down, and for the same reason: never merge knowledge on a guess.
+        "CREATE TABLE IF NOT EXISTS predicate_merge_proposals (
+            id                  TEXT PRIMARY KEY,
+            kind                TEXT NOT NULL,
+            candidate_predicate TEXT NOT NULL,
+            existing_predicate  TEXT NOT NULL,
+            similarity_score    REAL NOT NULL,
+            similarity_reason   TEXT,
+            evidence_capture_id TEXT REFERENCES inbox(id),
+            status              TEXT NOT NULL DEFAULT 'pending',
+            created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            resolved_at         TIMESTAMP,
+            resolved_predicate  TEXT
+        )",
+        // ── SYN-189 — Fact negation, when the target is not certain ─────────
+        // A negation whose target is unambiguous is applied on the spot: the
+        // fact is obsoleted, and `POST /fact/{id}/restore` undoes it. This
+        // table holds the rest — several facts could be the one meant, the
+        // predicate only matches approximately, or nothing matches at all on
+        // an entity that does carry facts. Never merge knowledge on a guess,
+        // and never DROP knowledge on one either.
+        "CREATE TABLE IF NOT EXISTS fact_negation_proposals (
+            id                  TEXT PRIMARY KEY,
+            entity_id           TEXT NOT NULL REFERENCES entities(id),
+            predicate           TEXT NOT NULL,
+            value               TEXT,
+            reason              TEXT NOT NULL,
+            candidate_fact_ids  TEXT NOT NULL DEFAULT '[]',
+            evidence_capture_id TEXT REFERENCES inbox(id),
+            status              TEXT NOT NULL DEFAULT 'pending',
+            created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            resolved_at         TIMESTAMP,
+            resolved_fact_id    TEXT
+        )",
+        // ── SYN-188 — Entity rename, declared in a capture ──────────────────
+        // The canonical name is what titles the fiche, what the digest prints
+        // and what search returns: it is the name the user reads as being their
+        // own memory. So a capture PROPOSES a rename and a human applies it,
+        // exactly like a new entity type. Same table shape, same reason.
+        "CREATE TABLE IF NOT EXISTS entity_rename_proposals (
+            id                  TEXT PRIMARY KEY,
+            entity_id           TEXT NOT NULL REFERENCES entities(id),
+            current_name        TEXT NOT NULL,
+            proposed_name       TEXT NOT NULL,
+            evidence_capture_id TEXT REFERENCES inbox(id),
+            status              TEXT NOT NULL DEFAULT 'pending',
+            created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            resolved_at         TIMESTAMP
+        )",
         // ── SYN-58 — Live entity-type vocabulary + proposals ────────────────
         "CREATE TABLE IF NOT EXISTS active_entity_types (
             type        TEXT PRIMARY KEY,
@@ -368,6 +423,12 @@ pub(crate) fn init_schema(conn: &Connection) -> Result<(), rusqlite::Error> {
          ON project_entries(project_id, created_at DESC)",
         "CREATE INDEX IF NOT EXISTS idx_merge_proposals_status \
          ON entity_merge_proposals(status, created_at DESC)",
+        "CREATE INDEX IF NOT EXISTS idx_predicate_proposals_status \
+         ON predicate_merge_proposals(status, created_at DESC)",
+        "CREATE INDEX IF NOT EXISTS idx_fact_negation_pending \
+         ON fact_negation_proposals(status, created_at DESC)",
+        "CREATE INDEX IF NOT EXISTS idx_entity_rename_pending \
+         ON entity_rename_proposals(status, created_at DESC)",
         "CREATE INDEX IF NOT EXISTS idx_type_proposals_status \
          ON entity_type_proposals(status, created_at DESC)",
         "CREATE INDEX IF NOT EXISTS idx_project_attach_proposals_status \

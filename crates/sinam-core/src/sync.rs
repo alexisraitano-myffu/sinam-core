@@ -75,6 +75,15 @@ fn synced_tables() -> &'static [(&'static str, &'static str)] {
         ("entity_merge_proposals", "id"),
         ("active_entity_types", "type"),
         ("entity_type_proposals", "id"),
+        // SYN-190 — répliquée comme ses trois sœurs : on tranche une proposition
+        // depuis n'importe quel device, et l'arbitrage doit suivre.
+        ("predicate_merge_proposals", "id"),
+        // SYN-189 — même raison : une négation qu'on n'a pas su appliquer
+        // seule attend un arbitrage, et cet arbitrage doit valoir partout.
+        ("fact_negation_proposals", "id"),
+        // SYN-188 — le nom canonique est ce que l'utilisateur LIT : la
+        // proposition doit lui parvenir quel que soit l'appareil qui l'a vue.
+        ("entity_rename_proposals", "id"),
         ("project_attach_proposals", "id"),
         ("sync_owner", "id"),
         ("space", "id"),
