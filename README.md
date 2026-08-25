@@ -22,7 +22,7 @@ Everything the "Dream Cycle" does lives here as Rust modules in `crates/sinam-co
 | `summaries.rs` · `digest.rs` | Derived entity summaries (regenerated from active facts/relations) and the weekly digest |
 | `resources.rs` | URL fetch + summarize into searchable resources |
 | `sync.rs` | The P2P sync engine (see below) |
-| `snapshot.rs` | A local read snapshot for app replicas: the same JSON the host's read endpoints return, computed offline (space, devices, project facts, the "to validate" queues, the living-map graph) |
+| `snapshot.rs` | A local read snapshot for app replicas: the same JSON the host's read endpoints return, computed offline (space, devices, project facts, the "to validate" queues, the living-map graph). The map is computed **here and nowhere else** — deterministic Louvain, embedding-kNN springs, and a port of vis-network's `forceAtlas2Based` layout — so the host's `GET /graph` and an offline rebuild are the same map. Positions are not persisted; determinism replaces persistence |
 | `actions.rs` | The local write rail: `apply_action` mirrors the host's write endpoints, so an app can act offline and replay. A stale replay returns `not_found`/`skipped`, never a blocking error |
 | `pairing.rs` | Authenticated ECDH device pairing, plus a 6-digit code channel (SPAKE2 + confirmation MAC) for camera-less joiners |
 
