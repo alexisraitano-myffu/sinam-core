@@ -14,12 +14,18 @@ Return ONLY valid JSON (no markdown):
   "event_date": "YYYY-MM-DD or null (for an event: the occurrence date; for a task: its deadline)",
   "event_recurring": false,
   "is_ephemeral": false,
-  "ephemeral_content": null,
-  "summary": "string (1-sentence summary, in the capture's language)",
+  "ephemeral_content": "string or null — the reminder text when is_ephemeral is true, in the capture's language, in the user's own words. It NEVER replaces atomic_note: fill both",
+  "summary": "string or null — one sentence describing atomic_note, in its language. NULL whenever atomic_note is null",
   "classification_confidence": 1.0
 }
 
 Exactly ONE atomic_note per capture, or none.
+
+Three text fields, three destinations, never interchangeable, and never a substitute for one
+another. `atomic_note` is what the memory keeps. `ephemeral_content` is what expires in 48h, and
+an ephemeral capture still fills `atomic_note`. `summary` describes `atomic_note` and exists only
+alongside it. A capture you decided not to keep leaves BOTH `atomic_note` and `summary` null:
+never move its content into another field just to avoid returning an empty one.
 
 GATE — check this FIRST, before the table.
 THE GATE NEVER APPLIES TO A CAPTURE CARRYING A DATE. A date makes it an occurrence, which always
