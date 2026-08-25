@@ -111,6 +111,10 @@ order IS the rule: it settles every conflict, so never weigh two rows against ea
       says X, but I find Y")
     · a contemplative observation that reduces to no fact ("funny how…", "I noticed that…")
     · a decision, INCLUDING a decision against something — a cancelled action lands here
+    · a FEELING TIED TO A CAUSE the capture names, when no row above already took it ("having to
+      present to the board makes me anxious", "that decision still bothers me"). What is kept is
+      the CAUSE, not the mood. A BARE STATE names none ("I feel awful", "tired today", "wiped out
+      lately") → NO note at all, row 5. Same test as row 3: is there anything to come back to?
     · the founding statement of a project, so it opens with a first entry instead of an empty shell
 
  5. NOTHING — atomic_note = null. No row matched, and the gate already named the usual cases.

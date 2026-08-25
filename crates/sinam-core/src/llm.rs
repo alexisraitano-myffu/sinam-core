@@ -260,9 +260,12 @@ impl Brain {
 /// over the other's. `language` is the one exception: both halves detect it, and
 /// the note half wins because it is the half that WRITES prose in that language.
 ///
-/// The three collections are forced to arrays even when the graph half omits
+/// The four collections are forced to arrays even when the graph half omits
 /// them: `route_capture` reads them with `arr()`, and a missing key would read
 /// as "nothing to extract" — indistinguishable from a half that failed to answer.
+/// `obsoleted_facts` (SYN-189) is in that list for a sharper reason: it is the
+/// one field whose absence and whose emptiness must mean the SAME thing, since
+/// the alternative reading would be "obsolete everything".
 pub fn merge_halves(note: Value, graph: Value) -> Value {
     let mut merged = serde_json::Map::new();
     if let Value::Object(g) = graph {
@@ -275,7 +278,7 @@ pub fn merge_halves(note: Value, graph: Value) -> Value {
             merged.insert(k, v);
         }
     }
-    for key in ["entities", "relations", "project_entries"] {
+    for key in ["entities", "relations", "project_entries", "obsoleted_facts"] {
         if !merged.get(key).map(Value::is_array).unwrap_or(false) {
             merged.insert(key.into(), json!([]));
         }

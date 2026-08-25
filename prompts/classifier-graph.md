@@ -11,6 +11,10 @@ capture. Most captures teach nothing durable, and `"facts": []` is then the corr
 failure. Never restate the capture's own sentence as a fact, never store a one-off action ("bought
 bread", "went for a run"), an intention, a date that belongs to an event rather than to the entity,
 or a value invented to avoid leaving the field empty.
+NEVER a MOOD or a PSYCHIC STATE, the author's or anyone else's ("feels overwhelmed", "is stressed",
+"was sad"). A state is not durable, and a durable fact shows on the fiche AND in the weekly digest
+for as long as it lives. A lasting PHYSICAL condition is a different thing and stays allowed ("has
+asthma", "wears orthotic insoles"): a condition is a fact, a state is weather.
 
 Detect the capture's language and echo it as `language` (ISO 639-1: fr, en, es, de, …).
 Natural-language fields you WRITE (entity `summary`, project `content`) MUST be in the SAME
@@ -27,6 +31,7 @@ Return ONLY valid JSON (no markdown):
       "type": "string (one of the ACTIVE ENTITY TYPES provided in context — English snake_case)",
       "type_proposal": null,
       "aliases": ["string"],
+      "renamed_to": null,
       "summary": "string (1 TIMELESS sentence, IN THE CAPTURE'S LANGUAGE — ABSOLUTE dates only ('birthday on June 16'), NEVER a relative that expires; null if nothing notable)",
       "attributes": {"key": "value"},
       "facts": [
@@ -45,6 +50,9 @@ Return ONLY valid JSON (no markdown):
   ],
   "project_entries": [
     {"project_canonical": "string", "content": "string (the excerpt relevant to THIS project, in the capture's language)", "is_new": true}
+  ],
+  "obsoleted_facts": [
+    {"entity_canonical": "string", "predicate": "string (English snake_case)", "value": "string or null"}
   ]
 }
 
@@ -77,6 +85,50 @@ entity type rules:
 - "project" guard: emit "type": "project" ONLY if you also produce a project_entries item for THIS
   entity. An ambiguous name (often an approximate transcription) must never create a project: when
   in doubt → "type": "concept".
+
+renamed_to rules:
+- Fill it ONLY when the capture DECLARES that this entity is now called something else
+  ("my project is no longer called X but Y", "Acme has been renamed Globex"). Everywhere
+  else it stays null, which is nearly always.
+- It PROPOSES; a person confirms. Never write the new name into `canonical_name` yourself,
+  and never read a rename into a mere spelling variant or a nickname — those are `aliases`.
+- A rename is NOT a fact: do not also emit a predicate for it.
+
+predicate rules:
+- These seven are the CANONICAL names for the claims they make — use them verbatim rather
+  than a synonym of your own: works_at, job_title, lives_in, has_birthday, phone, email,
+  age. They are the only predicates the memory knows how to supersede: writing `works_as`
+  instead of `works_at` does not replace last year's employer, it stacks a second one
+  beside it, and both stay on the fiche.
+- Anywhere else, name the predicate freely. A genuinely new kind of fact is expected here,
+  and forcing an approximate match is WORSE than coining a name.
+- The name is the CLAIM; the value is the value. Never fold a value or a degree into it
+  ("supports_manual_tagging", "uses_font_rarely" → predicate + value, not predicate alone).
+- Never coin a predicate that encodes an INTENTION or a state still to come —
+  `planned_*`, `future_*`, `upcoming_*`, `will_*`. Such a fact turns FALSE on the day it
+  comes true, and nothing will ever contradict it: state the fact once it holds, or say
+  nothing. What is merely planned belongs to the note, not to the graph.
+- A predicate names a KIND of claim, not THIS one claim. If you cannot picture the SAME
+  predicate on a DIFFERENT entity, it is too specific: broaden it and move the specifics
+  into `value`. "chess_club_membership_date" fits one person and one club and will never be
+  used again; "member_since" says as much and still applies next month, to someone else.
+
+obsoleted_facts rules:
+- This is the ONLY way to say that something the memory may already hold has STOPPED being
+  true. Emit an item only when the capture MARKS a change or a correction: "ne travaille
+  plus chez Acme", "no longer lives in Lyon", "j'ai quitté mon poste", "en fait ce n'est pas
+  son numéro".
+- A plain absence stated for the first time ("Marie n'a pas de chat", "he has no car")
+  denies nothing and teaches nothing durable: emit NO fact and NO obsoleted_facts item.
+- A REPLACEMENT is not a negation. "Il a quitté Acme pour Globex" is one ordinary fact with
+  the new value — the memory retires the old one by itself. Only a claim left with NO
+  successor belongs here.
+- `value` names what stopped holding when the capture says it ("plus chez Acme" → "Acme");
+  use null when it does not ("il n'a plus de téléphone"), which retires the claim entirely.
+- Never put the same claim in both `facts` and `obsoleted_facts`.
+- If the capture only SUGGESTS the change ("je crois qu'il a quitté Acme"), leave it out:
+  hedge it in the note instead. Retiring knowledge on a maybe is worse than keeping it.
+- `obsoleted_facts: []` is the normal answer, and by far the most common one.
 
 persistence_value rules:
 5 = permanent (birth date, family tie, first name)
