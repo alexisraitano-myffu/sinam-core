@@ -524,9 +524,10 @@ fn graph(conn: &Connection) -> Result<Value, CoreError> {
     // Embedding-kNN springs: they feed the clustering and are never returned.
     // Without them a memory this sparse (a quarter of its entities carry no
     // relation at all) leaves Louvain almost nothing to group.
-    let mut for_communities = edges.clone();
-    for_communities.extend(semantic_edges(conn, &nodes).unwrap_or_default());
-    assign_communities(&mut nodes, &for_communities);
+    let mut spring_edges = edges.clone();
+    spring_edges.extend(semantic_edges(conn, &nodes).unwrap_or_default());
+    assign_communities(&mut nodes, &spring_edges);
+    place_nodes(&mut nodes, &spring_edges);
 
     // Clusters — the map only COLOURS a community that appears here (the
     // backend's ≥3-members rule: smaller ones float as grey orphans). The
@@ -585,6 +586,145 @@ fn set_degree(nodes: &mut [Map<String, Value>], edges: &[Map<String, Value>]) {
     for n in nodes {
         let id = display(n.get("id"));
         n.insert("degree".into(), json!(deg.get(&id).copied().unwrap_or(0)));
+    }
+}
+
+/// ForceAtlas2Based layout, the solver vis-network runs and that graphify's
+/// graphs are drawn with. It used to live in the app (`ForceLayout.kt`), which
+/// meant the positions existed only where the screen did: the backend shipped
+/// x/y that the app threw away, and nothing else could ever agree with it.
+///
+/// One constant separates a readable map from a uniform gas: `SPRING_CONSTANT`
+/// was 0.010 against graphify's 0.08, so the springs pulled eight times too
+/// weakly against an unchanged repulsion. Measured on the real memory, the
+/// silhouette of the zones goes from 0.170 to 0.362 at 0.090; at 1200 nodes it
+/// goes from -0.320 (zones fully interpenetrating) to 0.107.
+///
+/// Positions are NOT persisted and are free to move as the memory grows. The
+/// solver is deterministic instead: same graph, same positions, everywhere.
+const LAYOUT_GRAVITATIONAL: f64 = -60.0;
+const LAYOUT_CENTRAL_GRAVITY: f64 = 0.005;
+const LAYOUT_SPRING_LENGTH: f64 = 180.0; // vis multiplies non-via edges by 1.5
+const LAYOUT_SPRING_CONSTANT: f64 = 0.090;
+const LAYOUT_DAMPING: f64 = 0.4;
+const LAYOUT_AVOID_OVERLAP: f64 = 0.8;
+const LAYOUT_TIMESTEP: f64 = 0.5;
+const LAYOUT_MAX_VELOCITY: f64 = 50.0;
+const LAYOUT_ITERATIONS: usize = 800;
+
+/// Java's `String.hashCode`, over UTF-16 code units. The app scattered its
+/// starting positions with it; keeping the same hash keeps the same starting
+/// conditions, so the map the core draws is the one the phone used to draw,
+/// minus the spring constant.
+fn java_string_hash(s: &str) -> i32 {
+    s.encode_utf16().fold(0i32, |h, c| h.wrapping_mul(31).wrapping_add(c as i32))
+}
+
+/// Write an `x`/`y` on every node. `edges` carries the real relations AND the
+/// semantic springs: both pull, only the real ones counted towards `degree`,
+/// which here plays the part of vis-network's node mass.
+fn place_nodes(nodes: &mut [Map<String, Value>], edges: &[Map<String, Value>]) {
+    use std::collections::HashMap;
+
+    let n = nodes.len();
+    if n == 0 {
+        return;
+    }
+    let ids: Vec<String> = nodes.iter().map(|n| display(n.get("id"))).collect();
+    let index: HashMap<&str, usize> =
+        ids.iter().enumerate().map(|(i, id)| (id.as_str(), i)).collect();
+    // Mass and drawn radius both follow the degree, exactly as the app did.
+    let mass: Vec<f64> = nodes
+        .iter()
+        .map(|n| n.get("degree").and_then(Value::as_i64).unwrap_or(0) as f64 + 1.0)
+        .collect();
+    let radius: Vec<f64> = nodes
+        .iter()
+        .map(|n| 6.0 + 5.0 * (n.get("degree").and_then(Value::as_i64).unwrap_or(0) as f64).sqrt())
+        .collect();
+
+    let (mut x, mut y) = (vec![0.0f64; n], vec![0.0f64; n]);
+    let (mut vx, mut vy) = (vec![0.0f64; n], vec![0.0f64; n]);
+    let (mut fx, mut fy) = (vec![0.0f64; n], vec![0.0f64; n]);
+
+    // Deterministic scatter in a disc, seeded by the id.
+    let spread = 50.0 * (n as f64).sqrt();
+    for i in 0..n {
+        let h = java_string_hash(&ids[i]);
+        let ang = (h & 0xFFFF) as f64 / 65535.0 * 2.0 * std::f64::consts::PI;
+        let r = ((h as u32) >> 16) as f64 / 65535.0 * spread + 1.0;
+        x[i] = r * ang.cos();
+        y[i] = r * ang.sin();
+    }
+
+    let links: Vec<(usize, usize)> = edges
+        .iter()
+        .filter_map(|e| {
+            let a = *index.get(display(e.get("from")).as_str())?;
+            let b = *index.get(display(e.get("to")).as_str())?;
+            (a != b).then_some((a, b))
+        })
+        .collect();
+    let overlap = 1.0 - LAYOUT_AVOID_OVERLAP.clamp(0.0, 1.0);
+
+    for _ in 0..LAYOUT_ITERATIONS {
+        // 1. central gravity SETS the force for the iteration.
+        for i in 0..n {
+            let (dx, dy) = (-x[i], -y[i]);
+            let g = LAYOUT_CENTRAL_GRAVITY * mass[i];
+            fx[i] = dx * g;
+            fy[i] = dy * g;
+        }
+        // 2. repulsion, every pair against every other.
+        for i in 0..n {
+            for j in (i + 1)..n {
+                let (mut dx, dy) = (x[j] - x[i], y[j] - y[i]);
+                let mut dist = dx.hypot(dy);
+                if dist == 0.0 {
+                    dist = 0.1;
+                    dx = 0.1;
+                }
+                let di = if overlap < 1.0 {
+                    (0.1 + overlap * radius[i]).max(dist - radius[i])
+                } else {
+                    dist
+                };
+                let gi = LAYOUT_GRAVITATIONAL * mass[i] / (di * di);
+                fx[i] += dx * gi;
+                fy[i] += dy * gi;
+                let dj = if overlap < 1.0 {
+                    (0.1 + overlap * radius[j]).max(dist - radius[j])
+                } else {
+                    dist
+                };
+                let gj = LAYOUT_GRAVITATIONAL * mass[j] / (dj * dj);
+                fx[j] -= dx * gj;
+                fy[j] -= dy * gj;
+            }
+        }
+        // 3. springs.
+        for &(a, b) in &links {
+            let (dx, dy) = (x[a] - x[b], y[a] - y[b]);
+            let dist = dx.hypot(dy).max(0.01);
+            let sf = LAYOUT_SPRING_CONSTANT * (LAYOUT_SPRING_LENGTH - dist) / dist;
+            fx[a] += dx * sf;
+            fy[a] += dy * sf;
+            fx[b] -= dx * sf;
+            fy[b] -= dy * sf;
+        }
+        // 4. integrate, mass 1 (the degree mass acts on the forces, not here).
+        for i in 0..n {
+            vx[i] = (vx[i] + (fx[i] - LAYOUT_DAMPING * vx[i]) * LAYOUT_TIMESTEP)
+                .clamp(-LAYOUT_MAX_VELOCITY, LAYOUT_MAX_VELOCITY);
+            vy[i] = (vy[i] + (fy[i] - LAYOUT_DAMPING * vy[i]) * LAYOUT_TIMESTEP)
+                .clamp(-LAYOUT_MAX_VELOCITY, LAYOUT_MAX_VELOCITY);
+            x[i] += vx[i] * LAYOUT_TIMESTEP;
+            y[i] += vy[i] * LAYOUT_TIMESTEP;
+        }
+    }
+    for (i, node) in nodes.iter_mut().enumerate() {
+        node.insert("x".into(), json!(x[i]));
+        node.insert("y".into(), json!(y[i]));
     }
 }
 
@@ -1043,6 +1183,88 @@ pub fn generated_for_capture(conn: &Connection, capture_id: &str) -> Result<Valu
 mod tests {
     use super::*;
     use crate::Storage;
+
+    /// Three dense groups joined by two bridges: the layout must put them in
+    /// three legible patches, not spread them evenly. The metric is the
+    /// silhouette of the drawn positions against the communities, the same one
+    /// the tuning bench used — it was 0.170 with the old spring constant on the
+    /// real memory, 0.362 with this one. 0.30 on a fixture this clean is a
+    /// floor, not a target: if it drops, a layout constant moved.
+    #[test]
+    fn the_layout_draws_separate_zones() {
+        let groups = [["a1", "a2", "a3", "a4", "a5", "a6"],
+                      ["b1", "b2", "b3", "b4", "b5", "b6"],
+                      ["c1", "c2", "c3", "c4", "c5", "c6"]];
+        let mut edges: Vec<Map<String, Value>> = Vec::new();
+        let mut link = |a: &str, b: &str, edges: &mut Vec<Map<String, Value>>| {
+            let mut e = Map::new();
+            e.insert("from".into(), json!(a));
+            e.insert("to".into(), json!(b));
+            e.insert("confidence".into(), json!(1.0));
+            edges.push(e);
+        };
+        for g in &groups {
+            for i in 0..g.len() {
+                for j in (i + 1)..g.len() {
+                    link(g[i], g[j], &mut edges);
+                }
+            }
+        }
+        link("a1", "b1", &mut edges); // two bridges, so it is one graph
+        link("b1", "c1", &mut edges);
+
+        let place = || {
+            let mut nodes: Vec<Map<String, Value>> = groups
+                .iter()
+                .flatten()
+                .map(|id| {
+                    let mut n = Map::new();
+                    n.insert("id".into(), json!(id));
+                    n
+                })
+                .collect();
+            set_degree(&mut nodes, &edges);
+            assign_communities(&mut nodes, &edges);
+            place_nodes(&mut nodes, &edges);
+            nodes
+        };
+        let nodes = place();
+
+        // Same graph twice: the same positions to the bit. Nothing is persisted,
+        // so determinism is the only thing keeping the map from dancing.
+        let again = place();
+        assert_eq!(nodes, again);
+
+        let pos: Vec<(f64, f64)> = nodes
+            .iter()
+            .map(|n| (n["x"].as_f64().unwrap(), n["y"].as_f64().unwrap()))
+            .collect();
+        let com: Vec<i64> = nodes.iter().map(|n| n["community_id"].as_i64().unwrap()).collect();
+        assert_eq!(com.iter().collect::<std::collections::HashSet<_>>().len(), 3);
+
+        let mut total = 0.0;
+        for i in 0..pos.len() {
+            let mean_to = |c: i64| {
+                let d: Vec<f64> = (0..pos.len())
+                    .filter(|&j| j != i && com[j] == c)
+                    .map(|j| (pos[i].0 - pos[j].0).hypot(pos[i].1 - pos[j].1))
+                    .collect();
+                if d.is_empty() { None } else { Some(d.iter().sum::<f64>() / d.len() as f64) }
+            };
+            let a = mean_to(com[i]).unwrap();
+            let b = com
+                .iter()
+                .copied()
+                .filter(|&c| c != com[i])
+                .collect::<std::collections::BTreeSet<_>>()
+                .into_iter()
+                .filter_map(mean_to)
+                .fold(f64::INFINITY, f64::min);
+            total += (b - a) / a.max(b);
+        }
+        let silhouette = total / pos.len() as f64;
+        assert!(silhouette > 0.30, "silhouette {silhouette:.3}, les zones se mélangent");
+    }
 
     /// Shared fixture with the backend
     /// (`test_graph_layout.py::test_semantic_edges_match_the_core`): same
