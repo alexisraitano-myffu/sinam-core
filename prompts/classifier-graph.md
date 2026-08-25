@@ -17,6 +17,8 @@ for as long as it lives. A lasting PHYSICAL condition is a different thing and s
 asthma", "wears orthotic insoles"): a condition is a fact, a state is weather.
 
 Detect the capture's language and echo it as `language` (ISO 639-1: fr, en, es, de, …).
+The language is that of the SENTENCE, never that of the names inside it: a French first name
+in an English sentence leaves the capture English, and the other way round.
 Natural-language fields you WRITE (entity `summary`, project `content`) MUST be in the SAME
 language as the capture. The SKELETON stays English, ALWAYS: entity `type`, fact/relation
 `predicate` (snake_case: works_at, lives_in, has_birthday, sibling_of), and `category`.
@@ -115,14 +117,19 @@ predicate rules:
 
 obsoleted_facts rules:
 - This is the ONLY way to say that something the memory may already hold has STOPPED being
-  true. Emit an item only when the capture MARKS a change or a correction: "ne travaille
-  plus chez Acme", "no longer lives in Lyon", "j'ai quitté mon poste", "en fait ce n'est pas
-  son numéro".
+  true.
+- FIRST, LOOK FOR A SUCCESSOR IN THE SAME CAPTURE, before you write anything here. If the
+  capture gives the NEW value, it is a REPLACEMENT: emit ONE ordinary fact carrying that new
+  value and leave obsoleted_facts EMPTY. The memory retires the old value by itself, and
+  emitting both does the work twice, once of them wrongly. This holds EVEN WHEN AN EXPLICIT
+  NEGATION MARKER IS PRESENT: "Sofia ne travaille plus chez Initech, elle est maintenant chez
+  Umbrella" and "he moved from Lyon to Nantes" both name the successor, so both leave
+  obsoleted_facts empty.
+- Only a claim left with NO successor belongs here: "Sofia ne travaille plus chez Initech" on
+  its own, "no longer lives in Lyon", "j'ai quitté mon poste", "en fait ce n'est pas son
+  numéro".
 - A plain absence stated for the first time ("Marie n'a pas de chat", "he has no car")
   denies nothing and teaches nothing durable: emit NO fact and NO obsoleted_facts item.
-- A REPLACEMENT is not a negation. "Il a quitté Acme pour Globex" is one ordinary fact with
-  the new value — the memory retires the old one by itself. Only a claim left with NO
-  successor belongs here.
 - `value` names what stopped holding when the capture says it ("plus chez Acme" → "Acme");
   use null when it does not ("il n'a plus de téléphone"), which retires the claim entirely.
 - Never put the same claim in both `facts` and `obsoleted_facts`.
@@ -136,6 +143,10 @@ persistence_value rules:
 3 = current state (ongoing project)
 2 = contextual (one-off event)
 1 = noise (passing mention)
+This ladder rates THE TIE TO THE AUTHOR'S WORLD, never how eternal the statement happens to be.
+A species never changes, and a parrot seen once at a market is still a passing mention: rate it 1.
+Ask "will this come back in the author's life?", not "is this true forever?" — otherwise every
+permanent attribute of every stranger would earn a node.
 This ladder decides whether something DESERVES a node — people, places, objects and animals alike:
 persistence, not whether a proper noun is present. A pet living with someone ("my cat is called
 Gipsy") → 4-5, so it becomes an entity. An animal crossed once ("a bear at the zoo called
@@ -151,6 +162,13 @@ DEDUCTION YES, INVENTION NO — the line is what the capture ENTAILS:
 DEDUCE and EMIT. What the capture's own content implies must be emitted, never left implicit
 because you hesitate. "Yanis is Marc and Julie's son and Léna's brother" → son_of(Yanis, Marc),
 son_of(Yanis, Julie), sibling_of(Yanis, Léna) AND daughter_of(Léna, Marc), daughter_of(Léna, Julie).
+RESOLVE PRONOUNS, THEN ATTACH. "she", "il", "they" almost always point at someone the capture
+already names ("Julie told me she was moving to Bordeaux" → the fact is Julie's): resolve them and
+emit the fact on that person, exactly as before. This bullet takes nothing away.
+The one thing it forbids is the NAME: never write a canonical_name that is a pronoun ("She", "Il",
+"They") or a placeholder ("unknown", "someone"). When truly nobody is named anywhere, emit no
+entity, no fact and no obsoleted_facts item — a node called "She" is permanent, and no later
+capture will ever merge into it.
 NEVER INVENT world knowledge the capture does not carry. "Marie has a cat named Gipsy" gives a name
 and an owner, nothing else — no breed, no age, no species detail.
 Label a deduction for what it is, so it can be checked later:
@@ -173,6 +191,10 @@ deserves an event; that is not your call and never a reason to withhold the fact
 But A PARTY IS NOT A BIRTHDAY. The capture must actually say it — "anniversaire", "birthday",
 "né le", "born on", or a date given AS a date of birth. "la fête de Pierre le 20", "Pierre's party
 on the 20th" state a gathering on a date, nothing about when he was born: emit NO has_birthday.
+AN AGE IS NOT A DATE OF BIRTH EITHER. "Marc a fêté ses 40 ans", "she turns 50 next month" state
+an age, not a date: emit NO has_birthday. Neither today's date nor the day a birthday was
+celebrated is a date of birth, and deriving a birth year from an age lands on the wrong year one
+time in two.
 A birthday is written into the graph forever and nothing will ever contradict it — when the word
 is absent, omitting is right and guessing is not.
 

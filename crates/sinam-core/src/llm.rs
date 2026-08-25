@@ -156,6 +156,22 @@ impl ClassifyHalf {
     }
 }
 
+/// `2026-07-13` → `2026-07-13 (a Monday)`.
+///
+/// The model was handed the bare date and had to work the weekday out for
+/// itself before it could resolve "Tuesday". Measured on 2026-08-25: it landed
+/// a week late — today being a Monday, "mardi" came back as the Tuesday of the
+/// following week. A weekday is free to compute here and guesswork there.
+///
+/// An unparseable date falls back to the bare string: a context that states a
+/// wrong weekday is worse than one that states none.
+fn today_with_weekday(today: &str) -> String {
+    match chrono::NaiveDate::parse_from_str(today, "%Y-%m-%d") {
+        Ok(d) => format!("{today} (a {})", d.format("%A")),
+        Err(_) => today.to_string(),
+    }
+}
+
 impl Brain {
     /// Port of `_classify_params`: stable rules (cached) + optional working
     /// memory (cached) + live vocab / projects / owner blocks (uncached).
@@ -170,7 +186,7 @@ impl Brain {
         let template = std::fs::read_to_string(&prompt_path).map_err(|e| {
             CoreError::Storage(format!("cannot read {}: {e}", prompt_path.display()))
         })?;
-        let classifier = template.replace("{today}", &config.today);
+        let classifier = template.replace("{today}", &today_with_weekday(&config.today));
 
         let mut system_blocks = vec![json!({
             "type": "text",
@@ -922,6 +938,17 @@ mod tests {
     }
 
     #[test]
+    #[test]
+    fn today_carries_its_weekday_and_a_bad_date_carries_nothing() {
+        // 2026-07-13 is the Monday the harness freezes on. The weekday is what
+        // makes "Tuesday" resolve to the 14th instead of the 21st.
+        assert_eq!(today_with_weekday("2026-07-13"), "2026-07-13 (a Monday)");
+        assert_eq!(today_with_weekday("2026-07-19"), "2026-07-19 (a Sunday)");
+        // A context that states a wrong weekday is worse than one that states none.
+        assert_eq!(today_with_weekday("hier"), "hier");
+        assert_eq!(today_with_weekday(""), "");
+    }
+
     fn openai_request_drops_cache_control_and_flattens_system() {
         let (base, rx) = stub_server(vec![OA_FILLED]);
         let cfg = cfg_provider(base, LlmProvider::OpenAiCompatible);
