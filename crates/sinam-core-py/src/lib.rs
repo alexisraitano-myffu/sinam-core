@@ -379,6 +379,17 @@ impl SqlConnection {
             .map_err(core_err)
     }
 
+    /// The living map as JSON: nodes, edges, zones, positions. The backend's
+    /// `GET /graph` returns this verbatim rather than recomputing a projection
+    /// of its own.
+    #[pyo3(signature = (include_notes=true, semantic=true))]
+    fn read_graph(&self, py: Python<'_>, include_notes: bool, semantic: bool) -> PyResult<String> {
+        let conn = self.get()?;
+        let graph =
+            py.detach(|| conn.read_graph(include_notes, semantic)).map_err(core_err)?;
+        Ok(graph.to_string())
+    }
+
     /// SYN-23 — the digest's structured week as JSON (pure SQL on THIS
     /// connection, offline). `now` = optional fixed clock 'YYYY-MM-DD HH:MM:SS'.
     #[pyo3(signature = (now=None, days=7))]

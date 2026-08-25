@@ -215,6 +215,19 @@ impl SqlConnection {
         crate::snapshot::read_snapshot(&conn)
     }
 
+    /// The living map, on its own: nodes, edges, zones and positions. The host
+    /// backend serves `GET /graph` straight from this instead of keeping its own
+    /// copy of the projection — one implementation, so the map is the same
+    /// whether it arrives over HTTP or is rebuilt offline.
+    pub fn read_graph(
+        &self,
+        include_notes: bool,
+        semantic: bool,
+    ) -> Result<serde_json::Value, CoreError> {
+        let conn = self.lock()?;
+        crate::snapshot::graph(&conn, include_notes, semantic)
+    }
+
     /// SYN-160 — what the LLM calls of `month` (`YYYY-MM`) consumed, split by
     /// operation and model. TOKENS only, never a price: the tariff, who holds
     /// the key and who actually pays are host concerns, and a wrong figure is

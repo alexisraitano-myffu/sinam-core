@@ -363,7 +363,11 @@ fn devices(conn: &Connection) -> Result<Vec<Value>, CoreError> {
 /// deterministic label propagation: stable across pulls, not id-identical to
 /// the backend's Louvain (accepted — the two sources never mix on screen:
 /// HTTP serves the map online, this snapshot only when the Mac is silent).
-fn graph(conn: &Connection) -> Result<Value, CoreError> {
+pub(crate) fn graph(
+    conn: &Connection,
+    include_notes: bool,
+    semantic: bool,
+) -> Result<Value, CoreError> {
     use std::collections::HashMap;
 
     // Entity nodes — the same visibility rules as `app.py::graph`.
@@ -433,6 +437,7 @@ fn graph(conn: &Connection) -> Result<Value, CoreError> {
 
     // Note nodes + mention edges. `entities_mentioned` stores canonical
     // NAMES, not ids — resolve against the entity nodes already present.
+    // Off for the legacy entity-only shape, which predates the map.
     let name_to_id: HashMap<String, String> = nodes
         .iter()
         .filter_map(|n| {
@@ -449,7 +454,10 @@ fn graph(conn: &Connection) -> Result<Value, CoreError> {
          FROM atomic_notes WHERE archived_at IS NULL AND kind != 'digest' \
          AND review_status != 'pending'",
         &[],
-    )? {
+    )?
+    .into_iter()
+    .filter(|_| include_notes)
+    {
         let nid = format!("n:{}", display(note.get("id")));
         let preview = note
             .get("title")
@@ -525,7 +533,9 @@ fn graph(conn: &Connection) -> Result<Value, CoreError> {
     // Without them a memory this sparse (a quarter of its entities carry no
     // relation at all) leaves Louvain almost nothing to group.
     let mut spring_edges = edges.clone();
-    spring_edges.extend(semantic_edges(conn, &nodes).unwrap_or_default());
+    if semantic {
+        spring_edges.extend(semantic_edges(conn, &nodes).unwrap_or_default());
+    }
     assign_communities(&mut nodes, &spring_edges);
     place_nodes(&mut nodes, &spring_edges);
 
@@ -1135,7 +1145,7 @@ pub fn read_snapshot(conn: &Connection) -> Result<Value, CoreError> {
         "devices": devices(conn)?,
         "pending_tasks": pending_tasks(conn)?,
         "pending_relations": pending_relations(conn)?,
-        "graph": graph(conn)?,
+        "graph": graph(conn, true, true)?,
     }))
 }
 
@@ -1438,7 +1448,7 @@ mod tests {
         )
         .unwrap();
 
-        let g = graph(&conn).unwrap();
+        let g = graph(&conn, true, true).unwrap();
         let nodes = g["nodes"].as_array().unwrap();
         let ids: Vec<&str> = nodes.iter().map(|n| n["id"].as_str().unwrap()).collect();
         // Archived entity and digest note are hidden; the note rides as n:<id>.
@@ -1479,7 +1489,7 @@ mod tests {
         assert_eq!(clusters[0]["size"], 3);
 
         // Deterministic: a second render colours identically.
-        assert_eq!(graph(&conn).unwrap(), g);
+        assert_eq!(graph(&conn, true, true).unwrap(), g);
     }
 
     #[test]
