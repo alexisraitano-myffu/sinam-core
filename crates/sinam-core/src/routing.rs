@@ -877,6 +877,22 @@ impl Brain {
                         source_inbox_id,
                     )?;
                 }
+                // SYN-188 — un renommage déclaré en capture PROPOSE, il
+                // n'applique pas. Réservé aux entités DÉJÀ connues : sur une
+                // entité que cette capture vient de créer, il n'y a rien à
+                // renommer, elle porte déjà le nom qu'on lui a donné.
+                if existing.is_some() {
+                    if let Some(nouveau) = entity_data
+                        .get("renamed_to")
+                        .and_then(Value::as_str)
+                        .map(str::trim)
+                        .filter(|n| !n.is_empty() && !n.eq_ignore_ascii_case(&canonical))
+                    {
+                        record_rename_proposal(
+                            conn, &id, &canonical, nouveau, source_inbox_id,
+                        )?;
+                    }
+                }
                 entity_id = Some(id);
             }
 
@@ -1759,6 +1775,37 @@ fn upsert_entity(
         )?;
         Ok(entity_id)
     }
+}
+
+/// SYN-188 — park a rename declared by a capture.
+///
+/// Idempotent on (entity, proposed name) while pending: the same capture
+/// replayed, or the rename declared twice before anyone confirms, must not
+/// stack two identical questions.
+fn record_rename_proposal(
+    conn: &Connection,
+    entity_id: &str,
+    current_name: &str,
+    proposed_name: &str,
+    capture_id: &str,
+) -> Result<(), CoreError> {
+    let already: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM entity_rename_proposals \
+         WHERE entity_id = ?1 AND LOWER(TRIM(proposed_name)) = LOWER(TRIM(?2)) \
+         AND status = 'pending'",
+        params![entity_id, proposed_name],
+        |r| r.get(0),
+    )?;
+    if already > 0 {
+        return Ok(());
+    }
+    conn.execute(
+        "INSERT INTO entity_rename_proposals \
+         (id, entity_id, current_name, proposed_name, evidence_capture_id) \
+         VALUES (?1,?2,?3,?4,?5)",
+        params![new_uuid(), entity_id, current_name, proposed_name, capture_id],
+    )?;
+    Ok(())
 }
 
 /// SYN-189 — park a negation whose target is not certain.
@@ -2644,6 +2691,86 @@ mod tests {
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
         )
         .unwrap()
+    }
+
+    // ── SYN-188 — renommage déclaré en capture ──────────────────────────
+
+    /// Route une capture qui déclare un renommage, sur une base où l'entité
+    /// existe déjà ou non. Rend (nom canonique après coup, propositions).
+    fn renommer(entite_existe: bool, canonical: &str, renamed_to: Value)
+        -> (String, Vec<(String, String)>) {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("s.db");
+        let brain = Brain::open(db.to_str().unwrap(), None).unwrap();
+        {
+            let conn = brain.storage.lock().unwrap();
+            conn.execute("INSERT INTO inbox (id, content) VALUES ('c1','x')", []).unwrap();
+            if entite_existe {
+                conn.execute(
+                    "INSERT INTO entities (id, type, canonical_name, aliases, mention_count) \
+                     VALUES ('e1','project',?1,'[]',3)",
+                    params![canonical],
+                ).unwrap();
+            }
+        }
+        let mut classified = base_note("note");
+        classified["entities"] = json!([{
+            "canonical_name": canonical, "type": "project", "renamed_to": renamed_to,
+            "facts": [{"predicate": "is_in_phase", "value": "test",
+                       "persistence_value": 4, "evidence_strength": "explicit"}]
+        }]);
+        let ctx = RouteContext {
+            now: "2026-08-25T12:00:00".into(),
+            today: "2026-08-25".into(),
+            intentions_cutoff: "2026-08-23T12:00:00".into(),
+            now_sql: "2026-08-25 12:00:00".into(),
+        };
+        brain
+            .route_capture(&json!({"id": "c1", "content": "x"}), &classified, &ctx)
+            .unwrap();
+        let conn = brain.storage.lock().unwrap();
+        let nom: String = conn
+            .query_row("SELECT canonical_name FROM entities LIMIT 1", [], |r| r.get(0))
+            .unwrap();
+        let props = {
+            let mut stmt = conn
+                .prepare("SELECT current_name, proposed_name FROM entity_rename_proposals")
+                .unwrap();
+            let rows = stmt
+                .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+                .unwrap()
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap();
+            rows
+        };
+        (nom, props)
+    }
+
+    #[test]
+    fn a_declared_rename_proposes_and_never_applies() {
+        // Le nom canonique titre la fiche, sort dans le digest et remonte en
+        // recherche : c'est le nom que l'utilisateur LIT comme étant sa mémoire.
+        // Un modèle ne le change pas.
+        let (nom, props) = renommer(true, "Synapse", json!("Sinam"));
+        assert_eq!(nom, "Synapse", "le nom canonique ne doit PAS avoir bougé");
+        assert_eq!(props, vec![("Synapse".to_string(), "Sinam".to_string())]);
+    }
+
+    #[test]
+    fn a_rename_toward_the_same_name_proposes_nothing() {
+        // Une variante de casse n'est pas un renommage. Sans ce garde-fou, la
+        // file se remplirait de questions qui ne changent rien.
+        let (_, props) = renommer(true, "Synapse", json!("synapse"));
+        assert!(props.is_empty());
+    }
+
+    #[test]
+    fn a_brand_new_entity_is_never_renamed() {
+        // Elle porte déjà le nom qu'on vient de lui donner : il n'y a rien à
+        // renommer, et proposer reviendrait à demander d'arbitrer une capture
+        // contre elle-même.
+        let (_, props) = renommer(false, "Atlas", json!("Atlas v2"));
+        assert!(props.is_empty());
     }
 
     // ── SYN-189 — négation d'un fait ────────────────────────────────────

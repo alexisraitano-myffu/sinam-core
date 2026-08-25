@@ -31,6 +31,7 @@ Return ONLY valid JSON (no markdown):
       "type": "string (one of the ACTIVE ENTITY TYPES provided in context — English snake_case)",
       "type_proposal": null,
       "aliases": ["string"],
+      "renamed_to": null,
       "summary": "string (1 TIMELESS sentence, IN THE CAPTURE'S LANGUAGE — ABSOLUTE dates only ('birthday on June 16'), NEVER a relative that expires; null if nothing notable)",
       "attributes": {"key": "value"},
       "facts": [
@@ -85,6 +86,14 @@ entity type rules:
   entity. An ambiguous name (often an approximate transcription) must never create a project: when
   in doubt → "type": "concept".
 
+renamed_to rules:
+- Fill it ONLY when the capture DECLARES that this entity is now called something else
+  ("my project is no longer called X but Y", "Acme has been renamed Globex"). Everywhere
+  else it stays null, which is nearly always.
+- It PROPOSES; a person confirms. Never write the new name into `canonical_name` yourself,
+  and never read a rename into a mere spelling variant or a nickname — those are `aliases`.
+- A rename is NOT a fact: do not also emit a predicate for it.
+
 predicate rules:
 - These seven are the CANONICAL names for the claims they make — use them verbatim rather
   than a synonym of your own: works_at, job_title, lives_in, has_birthday, phone, email,
@@ -95,6 +104,10 @@ predicate rules:
   and forcing an approximate match is WORSE than coining a name.
 - The name is the CLAIM; the value is the value. Never fold a value or a degree into it
   ("supports_manual_tagging", "uses_font_rarely" → predicate + value, not predicate alone).
+- Never coin a predicate that encodes an INTENTION or a state still to come —
+  `planned_*`, `future_*`, `upcoming_*`, `will_*`. Such a fact turns FALSE on the day it
+  comes true, and nothing will ever contradict it: state the fact once it holds, or say
+  nothing. What is merely planned belongs to the note, not to the graph.
 - A predicate names a KIND of claim, not THIS one claim. If you cannot picture the SAME
   predicate on a DIFFERENT entity, it is too specific: broaden it and move the specifics
   into `value`. "chess_club_membership_date" fits one person and one club and will never be

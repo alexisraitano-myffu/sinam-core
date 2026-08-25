@@ -211,6 +211,21 @@ pub(crate) fn init_schema(conn: &Connection) -> Result<(), rusqlite::Error> {
             resolved_at         TIMESTAMP,
             resolved_fact_id    TEXT
         )",
+        // ── SYN-188 — Entity rename, declared in a capture ──────────────────
+        // The canonical name is what titles the fiche, what the digest prints
+        // and what search returns: it is the name the user reads as being their
+        // own memory. So a capture PROPOSES a rename and a human applies it,
+        // exactly like a new entity type. Same table shape, same reason.
+        "CREATE TABLE IF NOT EXISTS entity_rename_proposals (
+            id                  TEXT PRIMARY KEY,
+            entity_id           TEXT NOT NULL REFERENCES entities(id),
+            current_name        TEXT NOT NULL,
+            proposed_name       TEXT NOT NULL,
+            evidence_capture_id TEXT REFERENCES inbox(id),
+            status              TEXT NOT NULL DEFAULT 'pending',
+            created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            resolved_at         TIMESTAMP
+        )",
         // ── SYN-58 — Live entity-type vocabulary + proposals ────────────────
         "CREATE TABLE IF NOT EXISTS active_entity_types (
             type        TEXT PRIMARY KEY,
@@ -412,6 +427,8 @@ pub(crate) fn init_schema(conn: &Connection) -> Result<(), rusqlite::Error> {
          ON predicate_merge_proposals(status, created_at DESC)",
         "CREATE INDEX IF NOT EXISTS idx_fact_negation_pending \
          ON fact_negation_proposals(status, created_at DESC)",
+        "CREATE INDEX IF NOT EXISTS idx_entity_rename_pending \
+         ON entity_rename_proposals(status, created_at DESC)",
         "CREATE INDEX IF NOT EXISTS idx_type_proposals_status \
          ON entity_type_proposals(status, created_at DESC)",
         "CREATE INDEX IF NOT EXISTS idx_project_attach_proposals_status \
