@@ -520,7 +520,13 @@ fn graph(conn: &Connection) -> Result<Value, CoreError> {
         });
         set_degree(&mut nodes, &edges);
     }
-    assign_communities(&mut nodes, &edges);
+
+    // Embedding-kNN springs: they feed the clustering and are never returned.
+    // Without them a memory this sparse (a quarter of its entities carry no
+    // relation at all) leaves Louvain almost nothing to group.
+    let mut for_communities = edges.clone();
+    for_communities.extend(semantic_edges(conn, &nodes).unwrap_or_default());
+    assign_communities(&mut nodes, &for_communities);
 
     // Clusters — the map only COLOURS a community that appears here (the
     // backend's ≥3-members rule: smaller ones float as grey orphans). The
@@ -580,6 +586,138 @@ fn set_degree(nodes: &mut [Map<String, Value>], edges: &[Map<String, Value>]) {
         let id = display(n.get("id"));
         n.insert("degree".into(), json!(deg.get(&id).copied().unwrap_or(0)));
     }
+}
+
+/// Soft edges between entities whose embeddings are close, mirroring
+/// `graph_layout.py::semantic_edges`. They are layout and clustering material
+/// only: they never reach the client, never count towards a node's degree, and
+/// never appear as a relation on screen.
+///
+/// The floor is 0.62, not the 0.80 this shipped with on the backend: the median
+/// best neighbour of the real memory scores 0.626, so 0.80 produced two edges in
+/// production and the feature was inert. Below 0.55 the edges link anything and
+/// the zones stop reading, so this is a narrow band, not a free knob.
+fn semantic_edges(
+    conn: &Connection,
+    nodes: &[Map<String, Value>],
+) -> Result<Vec<Map<String, Value>>, CoreError> {
+    use std::collections::HashSet;
+
+    let wanted: HashSet<String> = nodes
+        .iter()
+        .filter(|n| n.get("kind").and_then(Value::as_str) == Some("entity"))
+        .map(|n| display(n.get("id")))
+        .collect();
+    if wanted.len() < 3 || wanted.len() > SEMANTIC_MAX_NODES {
+        return Ok(Vec::new());
+    }
+    let mut ids: Vec<String> = Vec::new();
+    let mut vectors: Vec<Vec<f32>> = Vec::new();
+    for row in query_rows(
+        conn,
+        "SELECT id, embedding FROM entities \
+         WHERE embedding IS NOT NULL AND merged_into_id IS NULL AND status = 'active'",
+        &[],
+    )? {
+        let id = display(row.get("id"));
+        if !wanted.contains(&id) {
+            continue;
+        }
+        let Some(v) = decode_embedding(row.get("embedding")) else {
+            continue; // a blob that is not a float32 vector: skip, never fail
+        };
+        ids.push(id);
+        vectors.push(v);
+    }
+    if ids.len() < 3 {
+        return Ok(Vec::new());
+    }
+    // Sorted so the k-nearest scan below sees the same order as the backend.
+    let mut order: Vec<usize> = (0..ids.len()).collect();
+    order.sort_by(|&a, &b| ids[a].cmp(&ids[b]));
+    let ids: Vec<String> = order.iter().map(|&i| ids[i].clone()).collect();
+    let vectors: Vec<Vec<f32>> = order.iter().map(|&i| vectors[i].clone()).collect();
+
+    Ok(semantic_springs(&ids, &vectors)
+        .into_iter()
+        .map(|(a, b, score)| {
+            let mut e = Map::new();
+            e.insert("from".into(), json!(ids[a]));
+            e.insert("to".into(), json!(ids[b]));
+            e.insert(
+                "confidence".into(),
+                json!(((SEMANTIC_WEIGHT * score) * 10_000.0).round() / 10_000.0),
+            );
+            e.insert("semantic".into(), json!(true));
+            e
+        })
+        .collect())
+}
+
+/// Neighbours per entity, cosine floor, spring weight against ~1.0 for a real
+/// relation, and the size guard on an O(n²) scan.
+const SEMANTIC_K: usize = 4;
+const SEMANTIC_MIN_SCORE: f64 = 0.62;
+const SEMANTIC_WEIGHT: f64 = 0.45;
+const SEMANTIC_MAX_NODES: usize = 800;
+
+/// A base64 blob of little-endian float32s, as `/changes` ships them.
+fn decode_embedding(cell: Option<&Value>) -> Option<Vec<f32>> {
+    let raw = Base64::decode_vec(cell?.as_str()?).ok()?;
+    if raw.is_empty() || raw.len() % 4 != 0 {
+        return None;
+    }
+    Some(
+        raw.chunks_exact(4)
+            .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+            .collect(),
+    )
+}
+
+/// The pure half: `ids` sorted, `vectors` aligned with it. Returns the deduped
+/// undirected pairs above the floor, each with its cosine.
+fn semantic_springs(ids: &[String], vectors: &[Vec<f32>]) -> Vec<(usize, usize, f64)> {
+    use std::collections::HashSet;
+
+    let unit: Vec<Vec<f32>> = vectors
+        .iter()
+        .map(|v| {
+            let norm = v.iter().map(|x| x * x).sum::<f32>().sqrt();
+            let norm = if norm == 0.0 { 1.0 } else { norm };
+            v.iter().map(|x| x / norm).collect()
+        })
+        .collect();
+    let cosine = |a: usize, b: usize| -> f64 {
+        if unit[a].len() != unit[b].len() {
+            return -1.0; // dimensions changed mid-flight: not comparable
+        }
+        unit[a].iter().zip(&unit[b]).map(|(x, y)| x * y).sum::<f32>() as f64
+    };
+
+    let k = SEMANTIC_K.min(ids.len() - 1);
+    let mut seen: HashSet<(usize, usize)> = HashSet::new();
+    let mut out: Vec<(usize, usize, f64)> = Vec::new();
+    for a in 0..ids.len() {
+        // Best k neighbours, ties broken by id — an arbitrary pick would make
+        // the two maps disagree on close calls.
+        let mut ranked: Vec<(usize, f64)> =
+            (0..ids.len()).filter(|&b| b != a).map(|b| (b, cosine(a, b))).collect();
+        ranked.sort_by(|x, y| {
+            y.1.partial_cmp(&x.1)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| ids[x.0].cmp(&ids[y.0]))
+        });
+        for &(b, score) in ranked.iter().take(k) {
+            if score < SEMANTIC_MIN_SCORE {
+                break; // sorted: everything after is worse
+            }
+            let key = if a < b { (a, b) } else { (b, a) };
+            if seen.insert(key) {
+                out.push((key.0, key.1, score));
+            }
+        }
+    }
+    out
 }
 
 /// Louvain community detection — the same algorithm the backend runs
@@ -905,6 +1043,47 @@ pub fn generated_for_capture(conn: &Connection, capture_id: &str) -> Result<Valu
 mod tests {
     use super::*;
     use crate::Storage;
+
+    /// Shared fixture with the backend
+    /// (`test_graph_layout.py::test_semantic_edges_match_the_core`): same
+    /// vectors, same expected pairs and weights. If one side drifts, the map
+    /// served over HTTP and the map rebuilt offline stop grouping the same
+    /// entities.
+    #[test]
+    fn semantic_springs_match_the_backend() {
+        let ids: Vec<String> =
+            ["e1", "e2", "e3", "e4", "e5", "e6"].iter().map(|s| s.to_string()).collect();
+        let vectors: Vec<Vec<f32>> = vec![
+            vec![1.00, 0.00, 0.00, 0.00],
+            vec![0.95, 0.31, 0.00, 0.00],
+            vec![0.90, 0.44, 0.00, 0.00],
+            vec![0.00, 1.00, 0.00, 0.00],
+            vec![0.00, 0.95, 0.31, 0.00],
+            vec![0.00, 0.00, 0.00, 1.00], // orthogonal to everything: stays alone
+        ];
+        let got: Vec<(String, String, f64)> = semantic_springs(&ids, &vectors)
+            .into_iter()
+            .map(|(a, b, score)| {
+                let w = ((SEMANTIC_WEIGHT * score) * 10_000.0).round() / 10_000.0;
+                (ids[a].clone(), ids[b].clone(), w)
+            })
+            .collect();
+        let mut got = got;
+        got.sort_by(|a, b| (&a.0, &a.1).cmp(&(&b.0, &b.1)));
+        let expected = [
+            ("e1", "e2", 0.4278),
+            ("e1", "e3", 0.4043),
+            ("e2", "e3", 0.4456),
+            ("e4", "e5", 0.4278),
+        ];
+        assert_eq!(got.len(), expected.len(), "pairs: {got:?}");
+        for (g, e) in got.iter().zip(expected.iter()) {
+            assert_eq!((g.0.as_str(), g.1.as_str()), (e.0, e.1));
+            // f32 dot products do not have to agree to the last bit across two
+            // languages; the pair is the contract, the weight is a display.
+            assert!((g.2 - e.2).abs() < 1e-4, "{g:?} vs {e:?}");
+        }
+    }
 
     /// The karate club graph, the reference benchmark for community detection.
     /// The two implementations must land on the SAME partition, not merely on
