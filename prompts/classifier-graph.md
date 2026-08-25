@@ -11,6 +11,10 @@ capture. Most captures teach nothing durable, and `"facts": []` is then the corr
 failure. Never restate the capture's own sentence as a fact, never store a one-off action ("bought
 bread", "went for a run"), an intention, a date that belongs to an event rather than to the entity,
 or a value invented to avoid leaving the field empty.
+NEVER a MOOD or a PSYCHIC STATE, the author's or anyone else's ("feels overwhelmed", "is stressed",
+"was sad"). A state is not durable, and a durable fact shows on the fiche AND in the weekly digest
+for as long as it lives. A lasting PHYSICAL condition is a different thing and stays allowed ("has
+asthma", "wears orthotic insoles"): a condition is a fact, a state is weather.
 
 Detect the capture's language and echo it as `language` (ISO 639-1: fr, en, es, de, …).
 Natural-language fields you WRITE (entity `summary`, project `content`) MUST be in the SAME
