@@ -612,7 +612,15 @@ impl Brain {
         };
         let statut = p.get("status").and_then(Value::as_str).unwrap_or("pending");
         if statut != "pending" {
-            return Ok(json!({"status": statut, "proposal_id": proposal_id}));
+            // Un statut à part, et pas le statut déjà en base : rendre
+            // « accepted » à un second accept se lit comme une réussite côté
+            // appelant, alors que rien ne s'est passé. C'est un test HTTP qui
+            // l'a attrapé, la route ayant cru à un succès.
+            return Ok(json!({
+                "status": "already_resolved",
+                "resolution": statut,
+                "proposal_id": proposal_id
+            }));
         }
         let raw = p.get("entity_data").and_then(Value::as_str).unwrap_or("{}");
         let mut charge: Value = serde_json::from_str(raw).unwrap_or_else(|_| json!({}));
@@ -738,7 +746,11 @@ impl Brain {
         };
         let statut = p.get("status").and_then(Value::as_str).unwrap_or("pending");
         if statut != "pending" {
-            return Ok(json!({"status": statut, "proposal_id": proposal_id}));
+            return Ok(json!({
+                "status": "already_resolved",
+                "resolution": statut,
+                "proposal_id": proposal_id
+            }));
         }
         conn.execute(
             "UPDATE entity_creation_proposals SET status = 'rejected', \
@@ -3019,10 +3031,13 @@ mod tests {
         };
         assert_eq!(brain.reject_entity_creation(&id).unwrap()["status"], "rejected");
         assert_eq!(compte(&brain, "SELECT COUNT(*) FROM entities"), 0);
-        // Trancher deux fois ne rouvre rien.
-        assert_eq!(brain.reject_entity_creation(&id).unwrap()["status"], "rejected");
-        assert_eq!(brain.accept_entity_creation(&id, "2026-07-13").unwrap()["status"],
-                   "rejected");
+        // Trancher deux fois ne rouvre rien, et se DIT : un second accept qui
+        // répondrait « accepted » se lirait comme une réussite chez l'appelant.
+        let rejoue = brain.accept_entity_creation(&id, "2026-07-13").unwrap();
+        assert_eq!(rejoue["status"], "already_resolved");
+        assert_eq!(rejoue["resolution"], "rejected");
+        assert_eq!(brain.reject_entity_creation(&id).unwrap()["status"],
+                   "already_resolved");
         assert_eq!(compte(&brain, "SELECT COUNT(*) FROM entities"), 0);
     }
 

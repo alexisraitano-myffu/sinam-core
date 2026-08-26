@@ -851,6 +851,27 @@ impl Brain {
         Ok(serde_json::Value::from(ids).to_string())
     }
 
+    /// Accepter une entité proposée → JSON du résultat.
+    ///
+    /// L'hôte ne réécrit PAS la création de son côté : `upsert_entity` reste le
+    /// seul endroit qui écrit une fiche, ici comme à la capture. Une seconde
+    /// implémentation côté Python aurait dérivé au premier changement.
+    fn accept_entity_creation(&self, py: Python<'_>, proposal_id: &str,
+                              today: &str) -> PyResult<String> {
+        let out = py
+            .detach(|| self.inner.accept_entity_creation(proposal_id, today))
+            .map_err(brain_err)?;
+        Ok(out.to_string())
+    }
+
+    /// Refuser une entité proposée → JSON du résultat.
+    fn reject_entity_creation(&self, py: Python<'_>, proposal_id: &str) -> PyResult<String> {
+        let out = py
+            .detach(|| self.inner.reject_entity_creation(proposal_id))
+            .map_err(brain_err)?;
+        Ok(out.to_string())
+    }
+
     /// Alias-aware entity resolution → entity id or None.
     #[pyo3(signature = (canonical_name, aliases=None))]
     fn find_entity(
