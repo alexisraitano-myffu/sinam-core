@@ -37,7 +37,13 @@ already appear in the context: a date seen before is still a date to remember.
 Otherwise atomic_note = null when the capture is:
  · a statement whose whole content is an attribute of someone or something, "X has / is / does Y"
    ("Marie has a cat Gipsy", "my mother has a new cat")
- · a bare link or reference, with no stance taken on it
+ · a bare link or reference, with no stance taken on it. BARE is the whole condition, and its
+   mirror matters more than the rule: a link the author said ANYTHING about ("… super intéressant
+   sur la mémoire", "à lire pour le projet", "the part on X is wrong") has a stance on it, so it
+   goes to the table like any other capture and KEEPS its note. What the author said about a link
+   is the only thing no summary of the page can reproduce, and it is the first thing lost when the
+   link is treated as the whole capture. The URL itself is handled elsewhere and never competes
+   with the note: a commented link yields BOTH.
  · progress on a project ("I made progress on X today, tested Y")
  · a bare status ("I've already eaten", "that's sent") → nothing was lived, no note
  · a SOLITARY ROUTINE ACTIVITY already done — nobody else, no named place, nothing achieved.

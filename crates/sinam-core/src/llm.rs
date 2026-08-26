@@ -294,7 +294,7 @@ pub fn merge_halves(note: Value, graph: Value) -> Value {
             merged.insert(k, v);
         }
     }
-    for key in ["entities", "relations", "project_entries", "obsoleted_facts"] {
+    for key in ["entities", "relations", "project_entries", "obsoleted_facts", "resources"] {
         if !merged.get(key).map(Value::is_array).unwrap_or(false) {
             merged.insert(key.into(), json!([]));
         }

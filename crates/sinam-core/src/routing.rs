@@ -901,6 +901,18 @@ impl Brain {
     ) -> Result<Vec<String>, CoreError> {
         let mut entity_ids: Vec<String> = Vec::new();
 
+        // Un lien que l'utilisateur a posé lui-même vaut PREUVE : la fiche qui
+        // le porte naît sans passer par la file de création. L'exemption tient
+        // à l'entité qui reçoit l'URL, jamais à la capture entière — sinon, sur
+        // « Ryusuke Hamaguchi https://… », le lien deviendrait un passe-droit
+        // pour une personne que rien d'autre ne prouve.
+        let porteurs_de_lien: HashSet<String> = arr(classified.get("resources"))
+            .iter()
+            .filter_map(|r| r.get("entity_canonical").and_then(Value::as_str))
+            .map(|n| n.trim().to_lowercase())
+            .filter(|n| !n.is_empty())
+            .collect();
+
         let mut relation_names: HashSet<String> = HashSet::new();
         let mut relation_targets_by_from: HashMap<String, HashSet<String>> = HashMap::new();
         for rel in arr(classified.get("relations")) {
@@ -1031,7 +1043,8 @@ impl Brain {
             // trace ET rend la main.
             let preuve = existing.is_some()
                 || relation_names.contains(&canonical.to_lowercase())
-                || max_persistence >= MIN_ENTITY_PERSISTENCE;
+                || max_persistence >= MIN_ENTITY_PERSISTENCE
+                || porteurs_de_lien.contains(&canonical.to_lowercase());
             let should_create =
                 preuve || (anchors_durable_note && creation_directe_sans_preuve());
 
@@ -1157,6 +1170,10 @@ impl Brain {
                 )?;
             }
         }
+
+        // Les ressources en DERNIER : une URL appartient à quelque chose, et ce
+        // quelque chose doit déjà exister pour la recevoir.
+        record_resources(conn, classified, source_inbox_id)?;
 
         // SYN-190 — après TOUTES les écritures, jamais pendant.
         self.propose_predicate_merges(conn, classified, source_inbox_id)?;
@@ -1960,6 +1977,139 @@ fn upsert_entity(
 /// Idempotent on (entity, proposed name) while pending: the same capture
 /// replayed, or the rename declared twice before anyone confirms, must not
 /// stack two identical questions.
+/// Enregistrer les liens d'une capture. AUCUN réseau ici.
+///
+/// C'est le renversement du ticket : une ressource naît de ce que le
+/// classifieur a lu, pas de ce qu'une requête a ramené. Aller chercher la page
+/// devient un enrichissement qui peut échouer sans rien coûter, au lieu d'être
+/// ce qui décidait s'il existait une ressource — c'est ce couplage qui a rempli
+/// la mémoire d'un mur de connexion et d'une bannière de cookies.
+///
+/// Idempotent sur l'URL, et il ne remplit QUE ce qui manque : une capture
+/// rejouée, ou un second lien vers la même page, ne doit pas écraser ce qu'un
+/// humain a corrigé entre-temps.
+fn record_resources(
+    conn: &Connection,
+    classified: &Value,
+    capture_id: &str,
+) -> Result<(), CoreError> {
+    let texte = |v: Option<&Value>| {
+        v.and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|t| !t.is_empty())
+            .map(String::from)
+    };
+
+    for item in arr(classified.get("resources")) {
+        let Some(url) = texte(item.get("url")) else { continue };
+        if !url.starts_with("http") {
+            continue; // le champ dit « URL » ; ce qui n'en est pas ne l'est pas
+        }
+        let categorie = texte(item.get("category"));
+        let commentaire = texte(item.get("user_comment"));
+
+        let entity_id = match texte(item.get("entity_canonical")) {
+            Some(nom) => query_row_map(
+                conn,
+                "SELECT id FROM entities WHERE LOWER(canonical_name) = LOWER(?1) \
+                 AND merged_into_id IS NULL",
+                &[SqlV::from(nom)],
+            )?
+            .and_then(|r| r.get("id").and_then(Value::as_str).map(String::from)),
+            None => None,
+        };
+
+        let deja = query_row_map(
+            conn,
+            "SELECT id FROM resources WHERE url = ?1",
+            &[SqlV::from(url.clone())],
+        )?;
+        match deja {
+            Some(row) => {
+                let rid = row.get("id").and_then(Value::as_str).unwrap_or("").to_string();
+                conn.execute(
+                    "UPDATE resources SET entity_id = COALESCE(entity_id, ?2), \
+                     user_comment = COALESCE(user_comment, ?3) WHERE id = ?1",
+                    params![rid, entity_id, commentaire],
+                )?;
+            }
+            None => {
+                conn.execute(
+                    "INSERT INTO resources (id, type, source, url, entity_id, user_comment) \
+                     VALUES (?1,?2,?3,?4,?5,?6)",
+                    params![
+                        new_uuid(),
+                        categorie.clone().unwrap_or_else(|| "page".into()),
+                        capture_id,
+                        url,
+                        entity_id,
+                        commentaire
+                    ],
+                )?;
+            }
+        }
+
+        if let Some(eid) = &entity_id {
+            poser_le_lien_sur_la_fiche(conn, eid, &url, categorie.as_deref(),
+                                       commentaire.as_deref())?;
+        }
+    }
+    Ok(())
+}
+
+/// L'URL et la catégorie vont dans `attributes`, pas dans un fait.
+///
+/// Une URL est une IDENTITÉ, pas une affirmation sur la chose : « ceci est
+/// l'adresse de Linear » ne se périme pas, ne se contredit pas et n'a rien à
+/// faire dans une file de validation de faits. Et le vocabulaire des prédicats
+/// est gouverné (SYN-190) : y ajouter `url` ouvrirait une famille entière pour
+/// une donnée qui n'en est pas une.
+fn poser_le_lien_sur_la_fiche(
+    conn: &Connection,
+    entity_id: &str,
+    url: &str,
+    categorie: Option<&str>,
+    commentaire: Option<&str>,
+) -> Result<(), CoreError> {
+    let Some(row) = query_row_map(
+        conn,
+        "SELECT attributes, summary FROM entities WHERE id = ?1",
+        &[SqlV::from(entity_id.to_string())],
+    )?
+    else {
+        return Ok(());
+    };
+    let mut attrs: Map<String, Value> = row
+        .get("attributes")
+        .and_then(Value::as_str)
+        .and_then(|s| serde_json::from_str(s).ok())
+        .unwrap_or_default();
+    attrs.insert("url".into(), json!(url));
+    if let Some(c) = categorie {
+        attrs.insert("resource_category".into(), json!(c));
+    }
+
+    // Le commentaire de l'auteur devient le résumé de la fiche quand elle n'en
+    // a pas. Il dit pourquoi LUI l'a gardée, ce qu'aucun résumé de la page ne
+    // saura dire. Il ne remplace jamais un résumé existant.
+    let resume_vide = row
+        .get("summary")
+        .and_then(Value::as_str)
+        .map(|s| s.trim().is_empty())
+        .unwrap_or(true);
+    match (resume_vide, commentaire) {
+        (true, Some(c)) => conn.execute(
+            "UPDATE entities SET attributes = ?2, summary = ?3 WHERE id = ?1",
+            params![entity_id, py_dumps_ascii(&Value::Object(attrs)), c],
+        )?,
+        _ => conn.execute(
+            "UPDATE entities SET attributes = ?2 WHERE id = ?1",
+            params![entity_id, py_dumps_ascii(&Value::Object(attrs))],
+        )?,
+    };
+    Ok(())
+}
+
 /// Distribuer les faits d'une entité selon leur confiance.
 ///
 /// Extraite pour que l'acceptation d'une entité proposée emprunte EXACTEMENT
@@ -2909,6 +3059,167 @@ mod tests {
     }
 
     // SYN-119 — the language the classifier detected must flow end-to-end:
+    // ── Les ressources ──────────────────────────────────────────────────
+
+    fn capture_lien(entites: Value, ressources: Value, note: Value) -> Value {
+        json!({
+            "language": "fr",
+            "atomic_note": note,
+            "atomic_note_kind": if note.is_null() { "note" } else { "note" },
+            "is_ephemeral": false,
+            "entities": entites,
+            "relations": [],
+            "project_entries": [],
+            "resources": ressources,
+            "classification_confidence": 1.0
+        })
+    }
+
+    fn une(brain: &Brain, sql: &str) -> Vec<String> {
+        let conn = brain.storage.lock().unwrap();
+        let mut stmt = conn.prepare(sql).unwrap();
+        let rows = stmt
+            .query_map([], |r| {
+                Ok((0..r.as_ref().column_count())
+                    .map(|i| match r.get_ref(i).unwrap() {
+                        rusqlite::types::ValueRef::Null => "∅".to_string(),
+                        rusqlite::types::ValueRef::Text(t) => {
+                            String::from_utf8_lossy(t).to_string()
+                        }
+                        v => format!("{v:?}"),
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" | "))
+            })
+            .unwrap();
+        rows.collect::<Result<Vec<_>, _>>().unwrap()
+    }
+
+    #[test]
+    fn un_lien_vers_une_chose_qui_a_son_identite_se_pose_sur_elle() {
+        // « le tableau Linear https://linear.app/… » : Linear existe déjà comme
+        // outil. Une seconde fiche « ressource » à côté serait le doublon que
+        // la file de fusion existe pour nettoyer.
+        let brain = router_entite(capture_lien(
+            json!([{"canonical_name": "Linear", "type": "tool", "aliases": [],
+                    "summary": null, "attributes": {}, "facts": []}]),
+            json!([{"url": "https://linear.app/board", "category": "page",
+                    "entity_canonical": "Linear", "user_comment": null}]),
+            json!("Le tableau Linear"),
+        ));
+        assert_eq!(
+            une(&brain, "SELECT canonical_name, type FROM entities"),
+            vec!["Linear | tool"],
+            "une seule fiche, celle de l'outil"
+        );
+        assert_eq!(
+            une(&brain, "SELECT attributes FROM entities WHERE canonical_name = 'Linear'"),
+            vec![r#"{"url": "https://linear.app/board", "resource_category": "page"}"#]
+        );
+    }
+
+    #[test]
+    fn un_lien_qui_EST_la_chose_devient_une_fiche_ressource() {
+        let brain = router_entite(capture_lien(
+            json!([{"canonical_name": "Un article sur la mémoire", "type": "resource",
+                    "aliases": [], "summary": null, "attributes": {}, "facts": []}]),
+            json!([{"url": "https://example.com/article", "category": "article",
+                    "entity_canonical": "Un article sur la mémoire",
+                    "user_comment": "super intéressant sur la mémoire"}]),
+            json!("Un article super intéressant sur la mémoire"),
+        ));
+        assert_eq!(
+            une(&brain, "SELECT canonical_name, type FROM entities"),
+            vec!["Un article sur la mémoire | resource"]
+        );
+        // Le commentaire de l'auteur devient le résumé : il dit pourquoi LUI
+        // l'a gardé, ce qu'aucun résumé de la page ne sait dire.
+        assert_eq!(
+            une(&brain, "SELECT summary FROM entities"),
+            vec!["super intéressant sur la mémoire"]
+        );
+        assert_eq!(
+            une(&brain, "SELECT url, type, user_comment FROM resources"),
+            vec!["https://example.com/article | article | super intéressant sur la mémoire"]
+        );
+    }
+
+    #[test]
+    fn la_fiche_qui_porte_un_lien_ne_passe_pas_par_la_file_de_creation() {
+        // Aucun fait, aucun lien : sans exemption elle serait proposée. Le
+        // geste de garder l'URL EST la preuve.
+        let brain = router_entite(capture_lien(
+            json!([{"canonical_name": "Un article", "type": "resource", "aliases": [],
+                    "summary": null, "attributes": {}, "facts": []}]),
+            json!([{"url": "https://example.com/a", "category": "article",
+                    "entity_canonical": "Un article", "user_comment": "à lire"}]),
+            json!("Un article à lire"),
+        ));
+        assert_eq!(compte(&brain, "SELECT COUNT(*) FROM entities"), 1);
+        assert_eq!(compte(&brain, "SELECT COUNT(*) FROM entity_creation_proposals"), 0);
+    }
+
+    #[test]
+    fn le_lien_nexempte_que_la_fiche_quil_porte() {
+        // « Ryusuke Hamaguchi https://share.google/… » : la ressource naît, la
+        // personne reste soumise à la file. Sinon un lien serait un passe-droit
+        // pour tout ce qui traîne dans la même phrase.
+        let classified = json!({
+            "language": "fr",
+            "atomic_note": "Ryusuke Hamaguchi",
+            "atomic_note_kind": "task",
+            "is_ephemeral": false,
+            "entities": [
+                {"canonical_name": "Ryusuke Hamaguchi", "type": "person", "aliases": [],
+                 "summary": null, "attributes": {}, "facts": []},
+                {"canonical_name": "Une page sur Hamaguchi", "type": "resource",
+                 "aliases": [], "summary": null, "attributes": {}, "facts": []}
+            ],
+            "relations": [],
+            "project_entries": [],
+            "resources": [{"url": "https://share.google/x", "category": "page",
+                           "entity_canonical": "Une page sur Hamaguchi",
+                           "user_comment": null}],
+            "classification_confidence": 1.0
+        });
+        let brain = router_entite(classified);
+        assert_eq!(
+            une(&brain, "SELECT canonical_name FROM entities"),
+            vec!["Une page sur Hamaguchi"]
+        );
+        assert_eq!(
+            une(&brain, "SELECT canonical_name FROM entity_creation_proposals"),
+            vec!["Ryusuke Hamaguchi"]
+        );
+    }
+
+    #[test]
+    fn le_meme_lien_deux_fois_ne_fait_quune_ligne() {
+        let c = capture_lien(
+            json!([{"canonical_name": "Un article", "type": "resource", "aliases": [],
+                    "summary": null, "attributes": {}, "facts": []}]),
+            json!([{"url": "https://example.com/a", "category": "article",
+                    "entity_canonical": "Un article", "user_comment": "à lire"}]),
+            json!("Un article à lire"),
+        );
+        let brain = router_entite(c.clone());
+        {
+            let conn = brain.storage.lock().unwrap();
+            conn.execute("INSERT INTO inbox (id, content) VALUES ('c2', 'x')", [])
+                .unwrap();
+        }
+        let ctx = RouteContext {
+            now: "2026-07-14T12:00:00".into(),
+            today: "2026-07-14".into(),
+            intentions_cutoff: "2026-07-12T12:00:00".into(),
+            now_sql: "2026-07-14 12:00:00".into(),
+        };
+        brain
+            .route_capture(&json!({"id": "c2", "content": "x"}), &c, &ctx)
+            .unwrap();
+        assert_eq!(compte(&brain, "SELECT COUNT(*) FROM resources"), 1);
+    }
+
     // ── Entité proposée plutôt que créée ────────────────────────────────
 
     /// Un cerveau, une capture en boîte, et la capture routée. Rend le cerveau

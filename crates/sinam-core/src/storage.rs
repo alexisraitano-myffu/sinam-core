@@ -604,7 +604,19 @@ mod tests {
         let types: i64 = conn
             .query_row("SELECT count(*) FROM active_entity_types", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(types, 6);
+        // Sept depuis que `resource` est semé : une ressource est une entité
+        // comme un projet, et son type est connu du produit — le faire passer
+        // par la file des propositions demanderait « créer un type resource ? »
+        // au premier lien capturé.
+        assert_eq!(types, 7);
+        let resource: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM active_entity_types WHERE type = 'resource'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(resource, 1);
     }
 
     #[test]

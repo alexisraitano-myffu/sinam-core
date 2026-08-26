@@ -55,6 +55,14 @@ Return ONLY valid JSON (no markdown):
   ],
   "obsoleted_facts": [
     {"entity_canonical": "string", "predicate": "string (English snake_case)", "value": "string or null"}
+  ],
+  "resources": [
+    {
+      "url": "string (EXACTLY as written in the capture)",
+      "category": "article|video|podcast|paper|thread|page",
+      "entity_canonical": "string — the entity this link belongs to, which you ALSO emit in `entities`",
+      "user_comment": "string — what the AUTHOR said about it, in THEIR words; null if they said nothing"
+    }
   ]
 }
 
@@ -197,6 +205,26 @@ celebrated is a date of birth, and deriving a birth year from an age lands on th
 time in two.
 A birthday is written into the graph forever and nothing will ever contradict it — when the word
 is absent, omitting is right and guessing is not.
+
+resources rules — every URL BELONGS to something:
+Emit one item per http(s) URL in the capture, and name the entity it belongs to. That entity must
+ALSO appear in `entities`, so its facts, its relations and its summary work like any other's.
+Two shapes, and the type you give the entity is what tells them apart:
+ · the link merely gives ACCESS to a thing that has its own identity — a tool, a place, a
+   restaurant, an organization, a person. Emit THAT entity with ITS type and point the URL at it.
+   "the Linear board https://linear.app/…" → entity Linear (type tool), resource entity_canonical
+   "Linear". Never a second entity for the same thing: one node, one URL on it.
+ · the link IS the thing — an article, a video, a podcast, a paper. Nothing in the world exists
+   behind it, only a content. Emit an entity of type "resource", named by what the capture calls
+   it, and point the URL at that.
+user_comment carries the AUTHOR'S OWN WORDS about the link and nothing else — it says why THEY
+kept it, which no summary of the page can say. "https://… super intéressant sur la mémoire" →
+user_comment "super intéressant sur la mémoire". Nothing said about it → null.
+YOU HAVE NOT READ THE PAGE. Never write a title, a summary, a fact or an author you would be
+inferring from the URL alone. A bare link whose destination you cannot name from the capture is a
+resource whose entity is named by the URL itself — that is honest, and a later pass may rename it.
+Never restate a URL as a fact: it is an identity, not a claim about the thing.
+No URL in the capture → "resources": [] (empty array).
 
 Resolve relative dates to absolute dates.
 Today's date is: {today}.

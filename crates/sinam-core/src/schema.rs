@@ -355,8 +355,15 @@ pub(crate) fn init_schema(conn: &Connection) -> Result<(), rusqlite::Error> {
     }
     conn.execute(&vec_table, [])?;
 
-    // SYN-58: seed the live vocabulary with the six built-in types.
-    for builtin in ["person", "place", "project", "concept", "organization", "animal"] {
+    // SYN-58: seed the live vocabulary with the built-in types.
+    //
+    // `resource` est semé et NON proposé : le passer par la file des types
+    // ferait demander « créer un type resource ? » au premier lien capturé,
+    // alors que la décision est prise. La file sert aux types que personne
+    // n'avait prévus, pas à ceux que le produit connaît.
+    for builtin in [
+        "person", "place", "project", "concept", "organization", "animal", "resource",
+    ] {
         conn.execute(
             "INSERT OR IGNORE INTO active_entity_types (type, source) VALUES (?1, 'builtin')",
             [builtin],
@@ -375,6 +382,18 @@ pub(crate) fn init_schema(conn: &Connection) -> Result<(), rusqlite::Error> {
         "ALTER TABLE resources ADD COLUMN url        TEXT",
         "ALTER TABLE resources ADD COLUMN content    TEXT",
         "ALTER TABLE resources ADD COLUMN fetched_at TIMESTAMP",
+        // La table cesse d'être l'endroit où vit une ressource : elle garde
+        // l'ARTEFACT (ce que la page a rendu), l'entité garde le sens. Les deux
+        // répondent à deux questions différentes, et la table est la seule à
+        // pouvoir répondre à « toutes mes ressources » : une URL posée sur un
+        // outil ou un lieu ne crée aucune entité de type resource, donc une
+        // liste bâtie sur les entités la raterait.
+        "ALTER TABLE resources ADD COLUMN entity_id TEXT REFERENCES entities(id)",
+        // Les mots de l'auteur SUR le lien. Aucune colonne ne les portait :
+        // `title`, `content` et `summary` viennent tous de la page. C'est
+        // pourtant la seule chose qu'aucun résumé ne peut reproduire, puisque
+        // c'est elle qui dit pourquoi LUI l'a gardé.
+        "ALTER TABLE resources ADD COLUMN user_comment TEXT",
         // Sync columns on inbox (client_id enables idempotent capture).
         "ALTER TABLE inbox ADD COLUMN client_id TEXT",
         "ALTER TABLE inbox ADD COLUMN device_id TEXT",

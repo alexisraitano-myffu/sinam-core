@@ -306,27 +306,60 @@ fn summarize(
     }
 }
 
+/// Aller chercher la page, ou non.
+///
+/// La requête apprend au serveur d'en face l'IP, l'heure, l'URL et le
+/// user-agent — au moment où l'utilisateur ENREGISTRE, pas au moment où il
+/// lit, et pendant le cycle, donc sans qu'il soit devant. Un lien raccourci
+/// l'apprend à deux serveurs, le raccourcisseur puis la destination.
+///
+/// Allumé par défaut : le titre réel et un résumé valent quelque chose. Mais
+/// c'est désormais un choix, et il ne l'était pas — sans récupération, il n'y
+/// avait pas de ressource du tout.
+fn recuperation_autorisee() -> bool {
+    !matches!(
+        std::env::var("SYNAPSE_FETCH_RESOURCES").as_deref(),
+        Ok("0") | Ok("false") | Ok("FALSE")
+    )
+}
+
 impl Brain {
-    /// Fetch → extract → summarise → store one URL. Idempotent on the URL (an
-    /// already-stored link returns its id). Returns None if the fetch failed.
-    /// Network + LLM happen BEFORE the DB write (no lock held).
+    /// ENRICHIR un lien avec ce que la page en dit. Réseau + LLM avant l'écriture.
+    ///
+    /// Ce n'est plus ce qui fait EXISTER une ressource : le routage l'a déjà
+    /// enregistrée depuis ce que le classifieur a lu, sans aucune requête. Ici
+    /// on ne fait qu'ajouter le titre réel, le texte et un résumé, et échouer
+    /// ne coûte donc plus rien — c'est l'ancien couplage qui a rempli la
+    /// mémoire d'un mur de connexion et d'une bannière de cookies.
+    ///
+    /// Le garde n'est plus « cette URL est connue » mais « elle a déjà été
+    /// récupérée » : depuis le renversement, la ligne existe toujours avant
+    /// d'arriver ici, donc l'ancien garde n'aurait plus jamais laissé passer.
+    ///
+    /// Rend None si la récupération est coupée ou a échoué.
     pub fn process_resource(
         &self,
         url: &str,
         capture_id: Option<&str>,
         config: Option<&LlmConfig>,
     ) -> Result<Option<String>, CoreError> {
-        {
-            let conn = self.storage.lock()?;
-            let existing: Option<String> = conn
-                .query_row("SELECT id FROM resources WHERE url = ?1", params![url], |r| {
-                    r.get(0)
-                })
-                .optional()?;
-            if existing.is_some() {
-                return Ok(existing);
-            }
+        if !recuperation_autorisee() {
+            return Ok(None);
         }
+        let ligne = {
+            let conn = self.storage.lock()?;
+            let deja: Option<(String, Option<String>)> = conn
+                .query_row(
+                    "SELECT id, fetched_at FROM resources WHERE url = ?1",
+                    params![url],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .optional()?;
+            match deja {
+                Some((id, Some(_))) => return Ok(Some(id)), // déjà récupérée
+                autre => autre.map(|(id, _)| id),
+            }
+        };
 
         let Some(page) = fetch_and_extract(url, FETCH_TIMEOUT) else {
             return Ok(None);
@@ -336,7 +369,6 @@ impl Brain {
         // resource scorer keeps the best frame.
         let embedding = self.embed_frames(&format!("{}\n{}", page.title, summary));
 
-        let rid = new_uuid();
         let now = crate::decay::resolve_now(None)
             .format("%Y-%m-%d %H:%M:%S")
             .to_string();
@@ -344,12 +376,30 @@ impl Brain {
         if let Some(config) = config {
             crate::usage::record(&conn, config, crate::usage::Op::Resource, used);
         }
-        conn.execute(
-            "INSERT INTO resources (id, type, source, url, title, content, summary, \
-             embedding, fetched_at) VALUES (?1,'url',?2,?3,?4,?5,?6,?7,?8)",
-            params![rid, capture_id, url, page.title, page.text, summary, embedding, now],
-        )?;
-        Ok(Some(rid))
+        match ligne {
+            // Le cas normal depuis le renversement : la ligne existe, on la
+            // complète. Le type n'est PAS touché — il porte la catégorie que le
+            // classifieur a donnée, et la page n'a pas voix au chapitre là-dessus.
+            Some(id) => {
+                conn.execute(
+                    "UPDATE resources SET title = ?2, content = ?3, summary = ?4, \
+                     embedding = ?5, fetched_at = ?6 WHERE id = ?1",
+                    params![id, page.title, page.text, summary, embedding, now],
+                )?;
+                Ok(Some(id))
+            }
+            // Un lien que le classifieur n'a pas vu passer. Rare, et on ne le
+            // perd pas pour autant.
+            None => {
+                let rid = new_uuid();
+                conn.execute(
+                    "INSERT INTO resources (id, type, source, url, title, content, summary, \
+                     embedding, fetched_at) VALUES (?1,'page',?2,?3,?4,?5,?6,?7,?8)",
+                    params![rid, capture_id, url, page.title, page.text, summary, embedding, now],
+                )?;
+                Ok(Some(rid))
+            }
+        }
     }
 
     /// Process every URL found in a capture. Each is independent — one
