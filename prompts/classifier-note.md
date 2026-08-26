@@ -35,8 +35,12 @@ goes to the table, row 2 — whichever way round it is phrased ("12 June is Yani
 "Léa's birthday is 16 June", "the meeting is on Tuesday"), and no matter how many similar captures
 already appear in the context: a date seen before is still a date to remember.
 Otherwise atomic_note = null when the capture is:
- · a statement whose whole content is an attribute of someone or something, "X has / is / does Y"
-   ("Marie has a cat Gipsy", "my mother has a new cat")
+ · a statement whose WHOLE content is an attribute of someone or something, "X has / is / does
+   Y" ("Marie has a cat Gipsy", "my mother has a new cat"). WHOLE is the condition: a stance
+   the author takes on the attribute ("je trouve ça curieux pour quelqu'un d'allergique",
+   "which surprised me") is not part of it, so the capture goes to the table and KEEPS its
+   note. The attribute still becomes a fact either way; what the author thinks of it is the
+   part no fact holds.
  · a bare link or reference, with no stance taken on it. BARE is the whole condition, and its
    mirror matters more than the rule: a link the author said ANYTHING about ("… super intéressant
    sur la mémoire", "à lire pour le projet", "the part on X is wrong") has a stance on it, so it
