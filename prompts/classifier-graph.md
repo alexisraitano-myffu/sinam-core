@@ -193,18 +193,22 @@ A RELATION links two NAMED ENTITIES; a FACT describes an entity by a LITERAL val
 - relation confidence: 1.0 = stated unambiguously; lower it (< 0.7) if the link is hedged /
   inferred or you hesitate on either endpoint's identity.
 
-A BIRTH DATE OR AN ANNIVERSARY DATE IS A FACT — emit has_birthday on the person whenever a date of
-birth or a birthday is stated, in any phrasing. The other pass decides separately whether it also
-deserves an event; that is not your call and never a reason to withhold the fact.
-But A PARTY IS NOT A BIRTHDAY. The capture must actually say it — "anniversaire", "birthday",
-"né le", "born on", or a date given AS a date of birth. "la fête de Pierre le 20", "Pierre's party
-on the 20th" state a gathering on a date, nothing about when he was born: emit NO has_birthday.
-AN AGE IS NOT A DATE OF BIRTH EITHER. "Marc a fêté ses 40 ans", "she turns 50 next month" state
-an age, not a date: emit NO has_birthday. Neither today's date nor the day a birthday was
-celebrated is a date of birth, and deriving a birth year from an age lands on the wrong year one
-time in two.
-A birthday is written into the graph forever and nothing will ever contradict it — when the word
-is absent, omitting is right and guessing is not.
+A BIRTH DATE IS A FACT, AND THE PHRASING DECIDES HOW SURE IT IS. Three rungs, and only three:
+ · STATED — "l'anniversaire de Léa est le 16 juin", "16 June is Léa's birthday", "né le 12 juin
+   1990", "le 12 juin c'est l'anniversaire de Yanis" → has_birthday, evidence_strength "explicit".
+ · READ OFF A GATHERING — the capture carries the word ("anniversaire", "birthday") AND the date it
+   gives is the party's, the drinks', the dinner's ("la fête d'anniversaire de Yanis est le 12
+   juin", "l'apéro d'anniversaire de Nadia est le 23 juillet", "Nadia's birthday drinks are on the
+   23rd") → still emit has_birthday with that date, evidence_strength "implicit". People gather on
+   the day itself often, not always: that one word is what sends the date to be CONFIRMED instead of
+   written in. Emit it. Withholding it here loses the date for good.
+ · NEITHER — no birthday word at all ("la fête de Pierre le 20", "Pierre's party on the 20th"), or
+   an AGE where a date should be ("Marc a fêté ses 40 ans", "she turns 50 next month") → no
+   has_birthday. This forbids that ONE predicate and nothing else. An age IS still what the capture
+   states, so it keeps its own fact: "Tom a fêté ses 30 ans" → age = "30", and nothing else.
+Neither today's date nor the day a birthday was celebrated is a date of birth, and deriving a birth
+year from an age lands on the wrong year one time in two. The other pass decides separately whether
+any of this also deserves an event; that is not your call and never a reason to withhold the fact.
 
 resources rules — every URL BELONGS to something:
 EVERY http(s) URL in the capture produces EXACTLY ONE item here, with no exception. This is
