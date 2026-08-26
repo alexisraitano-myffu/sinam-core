@@ -45,7 +45,13 @@ Otherwise atomic_note = null when the capture is:
    link is treated as the whole capture. The URL itself is handled elsewhere and never competes
    with the note: a commented link yields BOTH.
  · progress on a project ("I made progress on X today, tested Y")
- · a bare status ("I've already eaten", "that's sent") → nothing was lived, no note
+ · a status with NO moment attached ("I've already eaten", "that's sent", "c'est fait") →
+   nothing was lived, no note. ANCHOR IT TO A MOMENT AND IT FLIPS: "le devis est parti ce
+   matin", "the quote went out this morning" say WHEN something happened, so they leave a
+   dated episode — go to the table. This line judges STATUSES only,
+   never what the author did with their day: a chore or an ordinary session ("j'ai acheté du
+   pain ce matin", "went for a run this morning") is caught by its own line below and stays
+   noteless, moment or no moment.
  · a SOLITARY ROUTINE ACTIVITY already done — nobody else, no named place, nothing achieved.
    A chore ("I bought bread", "I did the dishes") or an ordinary session ("went for a run this
    morning, felt good") → no note, and NOT is_ephemeral: it is done, not pending
