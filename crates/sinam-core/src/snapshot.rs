@@ -162,6 +162,25 @@ fn project_state(conn: &Connection, id: &str, name: &Value) -> Result<Value, Cor
          ORDER BY created_at ASC",
         &[&id],
     )?;
+    // Les ressources rattachées au projet : celles dont la fiche tient dans une
+    // relation avec lui, dans un sens ou dans l'autre. Miroir délibéré de
+    // `api/app.py::project_state`, à faire évoluer avec lui.
+    //
+    // Cette question ne pouvait pas se poser tant qu'une ressource vivait hors
+    // du graphe : c'est très exactement ce que « faire des ressources des
+    // entités » achète.
+    let resources = query_rows(
+        conn,
+        "SELECT r.id, r.url, r.type AS category, r.title, r.user_comment, \
+                r.entity_id, e.canonical_name AS entity_name \
+         FROM resources r JOIN entities e ON e.id = r.entity_id \
+         WHERE e.merged_into_id IS NULL AND EXISTS ( \
+           SELECT 1 FROM relations rel \
+           WHERE (rel.entity_from = e.id AND rel.entity_to = ?1) \
+              OR (rel.entity_to = e.id AND rel.entity_from = ?1)) \
+         ORDER BY r.created_at DESC",
+        &[&id],
+    )?;
     Ok(json!({
         "project_id": id,
         "canonical_name": name,
@@ -169,6 +188,7 @@ fn project_state(conn: &Connection, id: &str, name: &Value) -> Result<Value, Cor
         "entries_recent": entries,
         "entries_total": total,
         "facts": facts,
+        "resources": resources,
     }))
 }
 
