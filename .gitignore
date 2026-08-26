@@ -1,4 +1,9 @@
-/target
+# Toute sortie de cargo, à n'importe quelle profondeur et quelle que soit la
+# cible : `/target` seul n'attrapait pas target-android, et un `git add -A`
+# y a fait entrer 2284 fichiers le 25/08. Un crate imbriqué poserait le même
+# piège avec crates/*/target.
+target/
+target-*/
 **/*.so
 **/*.dylib
 **/*.a
@@ -14,4 +19,3 @@ bindings/
 graphify-out/
 CLAUDE.local.md
 .claude/
-/target-android
