@@ -207,7 +207,11 @@ A birthday is written into the graph forever and nothing will ever contradict it
 is absent, omitting is right and guessing is not.
 
 resources rules — every URL BELONGS to something:
-Emit one item per http(s) URL in the capture, and name the entity it belongs to. That entity must
+EVERY http(s) URL in the capture produces EXACTLY ONE item here, with no exception. This is
+mechanical, not a judgement: the sobriety rule above governs FACTS, never links. A link the author
+saved is a link the author saved, even bare, even when you can tell nothing about where it leads —
+dropping it loses the only thing the capture contained.
+Name the entity each link belongs to. That entity must
 ALSO appear in `entities`, so its facts, its relations and its summary work like any other's.
 Two shapes, and the type you give the entity is what tells them apart:
  · the link merely gives ACCESS to a thing that has its own identity — a tool, a place, a
