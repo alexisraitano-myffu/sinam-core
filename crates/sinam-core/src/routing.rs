@@ -117,6 +117,16 @@ fn env_f64(name: &str, default: f64) -> f64 {
         .unwrap_or(default)
 }
 
+/// Levier de repli : remettre la quatrième clause de création en création
+/// DIRECTE, sans passer par la file. Absent ou vide = comportement voulu, la
+/// proposition. Écrit ici et pas côté hôte parce que c'est le core qui décide.
+fn creation_directe_sans_preuve() -> bool {
+    matches!(
+        std::env::var("SYNAPSE_ENTITY_CREATE_UNPROVEN").as_deref(),
+        Ok("1") | Ok("true") | Ok("TRUE")
+    )
+}
+
 /// Wall-clock inputs, provided by the host so the core stays deterministic
 /// and testable (the Python code read the clock in place).
 #[derive(Debug, Clone)]
@@ -574,6 +584,170 @@ impl Brain {
             .and_then(|row| row.get("id").and_then(Value::as_str).map(String::from)))
     }
 
+    /// Accepter une entité proposée : elle naît, avec tout ce qui l'accompagnait.
+    ///
+    /// Le chemin d'écriture est celui de la création ordinaire — `upsert_entity`
+    /// reste le seul endroit qui écrit une fiche, `dispatch_facts` le seul qui
+    /// range un fait. Une seconde implémentation « pour l'acceptation » aurait
+    /// dérivé de la première au premier changement, et personne ne l'aurait vu.
+    ///
+    /// Deux choses se rejouent ici et pas à la capture, parce qu'elles ont
+    /// besoin de l'identifiant qui n'existait pas encore : la proposition de
+    /// TYPE, transportée dans la charge, et la proposition de fusion.
+    ///
+    /// Idempotent : une proposition déjà tranchée ressort telle quelle.
+    pub fn accept_entity_creation(
+        &self,
+        proposal_id: &str,
+        today: &str,
+    ) -> Result<Value, CoreError> {
+        let conn = self.storage.lock()?;
+        let Some(p) = query_row_map(
+            &conn,
+            "SELECT * FROM entity_creation_proposals WHERE id = ?1",
+            &[SqlV::from(proposal_id.to_string())],
+        )?
+        else {
+            return Ok(json!({"status": "not_found"}));
+        };
+        let statut = p.get("status").and_then(Value::as_str).unwrap_or("pending");
+        if statut != "pending" {
+            return Ok(json!({"status": statut, "proposal_id": proposal_id}));
+        }
+        let raw = p.get("entity_data").and_then(Value::as_str).unwrap_or("{}");
+        let mut charge: Value = serde_json::from_str(raw).unwrap_or_else(|_| json!({}));
+        let facts: Vec<Value> = charge
+            .get("facts")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        if let Value::Object(m) = &mut charge {
+            m.remove("facts");
+        }
+        let canonical = charge
+            .get("canonical_name")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        if canonical.is_empty() {
+            return Ok(json!({"status": "invalid_payload", "proposal_id": proposal_id}));
+        }
+        let capture_id = p
+            .get("evidence_capture_id")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        let aliases: Vec<String> = charge
+            .get("aliases")
+            .and_then(Value::as_array)
+            .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+            .unwrap_or_default();
+
+        conn.execute_batch("BEGIN")?;
+        let mut sortie = json!({});
+        let r = (|| -> Result<(), CoreError> {
+            // Entre la question et la réponse, la même entité a pu naître par
+            // une autre capture, celle-là avec une preuve. Accepter doit alors
+            // enrichir la fiche existante, jamais en fabriquer une jumelle.
+            let existing = find_existing_entity(&conn, &canonical, &aliases)?;
+            let deja = existing.is_some();
+            let statut_entite = if !deja && p.get("proposed_type").and_then(Value::as_str)
+                .is_some_and(|t| !t.trim().is_empty())
+            {
+                "pending"
+            } else {
+                "active"
+            };
+            let id = upsert_entity(
+                &conn,
+                &charge,
+                existing.as_ref(),
+                &facts,
+                &capture_id,
+                statut_entite,
+                today,
+            )?;
+
+            if !deja {
+                if let Some(t) = p.get("proposed_type").and_then(Value::as_str)
+                    .filter(|t| !t.trim().is_empty())
+                {
+                    conn.execute(
+                        "INSERT INTO entity_type_proposals \
+                         (id, proposed_type, reason, evidence_capture_id, candidate_entity_id) \
+                         VALUES (?1,?2,?3,?4,?5)",
+                        params![new_uuid(), t, None::<String>, &capture_id, &id],
+                    )?;
+                }
+                let merge_type = match charge.get("type") {
+                    None => Some("concept"),
+                    Some(Value::Null) => None,
+                    Some(v) => v.as_str(),
+                };
+                self.propose_merge_if_similar(&conn, &id, &canonical, merge_type, &capture_id)?;
+            }
+
+            // Même notation qu'à la capture : l'entité était neuve et vue une
+            // fois, ce qui est exactement l'état dans lequel on l'avait garée.
+            let scored: Vec<(Value, f64)> = facts
+                .iter()
+                .map(|f| {
+                    let c = compute_confidence(
+                        persistence_value(f),
+                        f.get("evidence_strength").and_then(Value::as_str).unwrap_or("explicit"),
+                        deja,
+                        if deja { 2 } else { 1 },
+                    );
+                    (f.clone(), c)
+                })
+                .collect();
+            dispatch_facts(&conn, Some(&id), &canonical, &scored, &capture_id)?;
+
+            conn.execute(
+                "UPDATE entity_creation_proposals SET status = 'accepted', \
+                 resolved_at = CURRENT_TIMESTAMP, created_entity_id = ?2 WHERE id = ?1",
+                params![proposal_id, &id],
+            )?;
+            sortie = json!({
+                "status": "accepted",
+                "proposal_id": proposal_id,
+                "entity_id": id,
+                "canonical_name": canonical,
+                "facts_written": facts.len(),
+            });
+            Ok(())
+        })();
+        finish_txn(&conn, r)?;
+        Ok(sortie)
+    }
+
+    /// Refuser : rien ne naît, et le nom n'est plus reproposé tant qu'aucune
+    /// preuve n'apparaît. Une capture ultérieure qui, elle, apporte un fait
+    /// durable ou un lien crée l'entité directement — le refus porte sur
+    /// « nommée en passant », pas sur l'entité elle-même.
+    pub fn reject_entity_creation(&self, proposal_id: &str) -> Result<Value, CoreError> {
+        let conn = self.storage.lock()?;
+        let Some(p) = query_row_map(
+            &conn,
+            "SELECT id, status FROM entity_creation_proposals WHERE id = ?1",
+            &[SqlV::from(proposal_id.to_string())],
+        )?
+        else {
+            return Ok(json!({"status": "not_found"}));
+        };
+        let statut = p.get("status").and_then(Value::as_str).unwrap_or("pending");
+        if statut != "pending" {
+            return Ok(json!({"status": statut, "proposal_id": proposal_id}));
+        }
+        conn.execute(
+            "UPDATE entity_creation_proposals SET status = 'rejected', \
+             resolved_at = CURRENT_TIMESTAMP WHERE id = ?1",
+            params![proposal_id],
+        )?;
+        Ok(json!({"status": "rejected", "proposal_id": proposal_id}))
+    }
+
     /// Port of `step5_validate_pending`: corroborated pending facts promote.
     pub fn validate_pending(&self, new_facts: &[Value]) -> Result<i64, CoreError> {
         let conn = self.storage.lock()?;
@@ -832,10 +1006,34 @@ impl Brain {
             } else {
                 0.0
             };
-            let should_create = existing.is_some()
+            // Trois clauses reposent sur une PREUVE — l'entité est déjà
+            // connue, elle tient dans un lien, ou l'un de ses faits est assez
+            // durable pour la porter. La quatrième n'en a aucune : elle est
+            // seulement nommée dans une capture qui laisse une note durable.
+            // C'est celle-là qui fabriquait une fiche sur « J'ai la fête de
+            // Pierre le 20 », et c'est celle-là qui passe en proposition.
+            //
+            // Elle n'est pas retirée, et ce n'est pas un détail : sans elle,
+            // une entité qui ancre une note durable retombe sous le garde-fou
+            // anti-bruit et disparaît sans laisser de trace. Proposer garde la
+            // trace ET rend la main.
+            let preuve = existing.is_some()
                 || relation_names.contains(&canonical.to_lowercase())
-                || max_persistence >= MIN_ENTITY_PERSISTENCE
-                || anchors_durable_note;
+                || max_persistence >= MIN_ENTITY_PERSISTENCE;
+            let should_create =
+                preuve || (anchors_durable_note && creation_directe_sans_preuve());
+
+            let propose = !should_create && anchors_durable_note;
+            if propose {
+                record_creation_proposal(
+                    conn,
+                    &canonical,
+                    &entity_data,
+                    &res.facts,
+                    source_inbox_id,
+                    type_proposal.as_ref().map(|(t, _)| t.as_str()),
+                )?;
+            }
 
             let mut entity_id: Option<String> = None;
             if should_create {
@@ -896,52 +1094,20 @@ impl Brain {
                 entity_id = Some(id);
             }
 
-            for (fact, confidence) in &scored {
-                if *confidence > 0.85 {
-                    if let Some(eid) = &entity_id {
-                        insert_fact(
-                            conn,
-                            eid,
-                            fact.get("predicate").and_then(Value::as_str).unwrap_or(""),
-                            fact.get("value").cloned().unwrap_or(Value::Null),
-                            *confidence,
-                            Value::String(source_inbox_id.to_string()),
-                            persistence_value(fact),
-                            Some(source_inbox_id.to_string()),
-                            fact.get("category").cloned().unwrap_or(Value::Null),
-                        )?;
-                    }
-                } else {
-                    let fact_data = json!({
-                        "entity_canonical": entity_data.get("canonical_name"),
-                        "predicate": fact.get("predicate"),
-                        "value": fact.get("value"),
-                        "persistence_value": fact.get("persistence_value").cloned()
-                            .unwrap_or(json!(3)),
-                        "evidence_strength": fact.get("evidence_strength").cloned()
-                            .unwrap_or(json!("explicit")),
-                        "category": fact.get("category"),
-                        "confidence": confidence,
-                        "source_inbox_id": source_inbox_id,
-                    });
-                    if *confidence >= 0.5 {
-                        conn.execute(
-                            "INSERT INTO pending_facts (id, fact_data, validation_strategy) \
-                             VALUES (?1,?2,?3)",
-                            params![new_uuid(), py_dumps_ascii(&fact_data), "passive"],
-                        )?;
-                    } else {
-                        conn.execute(
-                            "INSERT INTO review_queue (id, fact_data, suggested_entity) \
-                             VALUES (?1,?2,?3)",
-                            params![
-                                new_uuid(),
-                                py_dumps_ascii(&fact_data),
-                                entity_data.get("canonical_name").and_then(Value::as_str)
-                            ],
-                        )?;
-                    }
-                }
+            // Une entité seulement PROPOSÉE n'a pas d'identifiant, donc rien
+            // à quoi accrocher un fait. Ses faits voyagent dans la charge de
+            // la proposition et seront distribués à l'acceptation, par la
+            // fonction ci-dessous. Les faire passer ici mettrait la même
+            // question deux fois devant l'utilisateur : une fois sur l'entité,
+            // une fois sur le fait qui la nomme.
+            if !propose {
+                dispatch_facts(
+                    conn,
+                    entity_id.as_deref(),
+                    &canonical,
+                    &scored,
+                    source_inbox_id,
+                )?;
             }
         }
 
@@ -1782,6 +1948,121 @@ fn upsert_entity(
 /// Idempotent on (entity, proposed name) while pending: the same capture
 /// replayed, or the rename declared twice before anyone confirms, must not
 /// stack two identical questions.
+/// Distribuer les faits d'une entité selon leur confiance.
+///
+/// Extraite pour que l'acceptation d'une entité proposée emprunte EXACTEMENT
+/// ce chemin-là, et pas une copie qui dériverait. Les trois destinations et
+/// leurs deux seuils sont la seule chose que cette fonction décide.
+///
+/// `entity_id` à None : un fait sûr n'a nulle part où aller et se perd. C'est
+/// le comportement d'origine, laissé tel quel — le changer serait un autre
+/// sujet que celui de cette fonction.
+fn dispatch_facts(
+    conn: &Connection,
+    entity_id: Option<&str>,
+    canonical: &str,
+    scored: &[(Value, f64)],
+    source_inbox_id: &str,
+) -> Result<(), CoreError> {
+    for (fact, confidence) in scored {
+        if *confidence > 0.85 {
+            if let Some(eid) = entity_id {
+                insert_fact(
+                    conn,
+                    eid,
+                    fact.get("predicate").and_then(Value::as_str).unwrap_or(""),
+                    fact.get("value").cloned().unwrap_or(Value::Null),
+                    *confidence,
+                    Value::String(source_inbox_id.to_string()),
+                    persistence_value(fact),
+                    Some(source_inbox_id.to_string()),
+                    fact.get("category").cloned().unwrap_or(Value::Null),
+                )?;
+            }
+        } else {
+            let fact_data = json!({
+                "entity_canonical": canonical,
+                "predicate": fact.get("predicate"),
+                "value": fact.get("value"),
+                "persistence_value": fact.get("persistence_value").cloned()
+                    .unwrap_or(json!(3)),
+                "evidence_strength": fact.get("evidence_strength").cloned()
+                    .unwrap_or(json!("explicit")),
+                "category": fact.get("category"),
+                "confidence": confidence,
+                "source_inbox_id": source_inbox_id,
+            });
+            if *confidence >= 0.5 {
+                conn.execute(
+                    "INSERT INTO pending_facts (id, fact_data, validation_strategy) \
+                     VALUES (?1,?2,?3)",
+                    params![new_uuid(), py_dumps_ascii(&fact_data), "passive"],
+                )?;
+            } else {
+                conn.execute(
+                    "INSERT INTO review_queue (id, fact_data, suggested_entity) \
+                     VALUES (?1,?2,?3)",
+                    params![new_uuid(), py_dumps_ascii(&fact_data), canonical],
+                )?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Garer une entité que rien ne prouve, au lieu de la créer.
+///
+/// La charge complète du classifieur est stockée telle quelle : accepter plus
+/// tard doit écrire la MÊME entité, avec ses alias, ses attributs et ses faits,
+/// sans rejouer la capture — donc sans repayer un appel au modèle pour une
+/// réponse qu'on avait déjà.
+///
+/// Idempotent sur le nom tant que la proposition est en attente : la même
+/// capture rejouée, ou le même nom croisé deux fois avant qu'on tranche, ne
+/// doit pas empiler deux fois la même question.
+fn record_creation_proposal(
+    conn: &Connection,
+    canonical: &str,
+    entity_data: &Value,
+    facts: &[Value],
+    capture_id: &str,
+    proposed_type: Option<&str>,
+) -> Result<(), CoreError> {
+    if canonical.trim().is_empty() {
+        return Ok(());
+    }
+    let already: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM entity_creation_proposals \
+         WHERE LOWER(TRIM(canonical_name)) = LOWER(TRIM(?1)) AND status = 'pending'",
+        params![canonical],
+        |r| r.get(0),
+    )?;
+    if already > 0 {
+        return Ok(());
+    }
+    // Les faits voyagent DANS la charge : `entity_data` sort du classifieur
+    // sans eux, et une entité acceptée sans ses faits serait une fiche vide
+    // dont l'utilisateur ne comprendrait pas ce qu'elle fait là.
+    let mut charge = entity_data.clone();
+    if let Value::Object(m) = &mut charge {
+        m.insert("facts".into(), Value::Array(facts.to_vec()));
+    }
+    let declare = entity_data.get("type").and_then(Value::as_str);
+    conn.execute(
+        "INSERT INTO entity_creation_proposals \
+         (id, canonical_name, proposed_type, entity_data, evidence_capture_id) \
+         VALUES (?1,?2,?3,?4,?5)",
+        params![
+            new_uuid(),
+            canonical,
+            proposed_type.or(declare),
+            py_dumps_ascii(&charge),
+            capture_id
+        ],
+    )?;
+    Ok(())
+}
+
 fn record_rename_proposal(
     conn: &Connection,
     entity_id: &str,
@@ -2616,6 +2897,155 @@ mod tests {
     }
 
     // SYN-119 — the language the classifier detected must flow end-to-end:
+    // ── Entité proposée plutôt que créée ────────────────────────────────
+
+    /// Un cerveau, une capture en boîte, et la capture routée. Rend le cerveau
+    /// pour que chaque test dise ensuite ce qu'il vérifie, sans répéter le
+    /// montage.
+    fn router_entite(classified: Value) -> Brain {
+        let dir = tempfile::tempdir().unwrap();
+        // Le dossier temporaire doit survivre au retour : on le laisse fuir
+        // exprès, le test étant plus court que le processus.
+        let db = dir.keep().join("s.db");
+        let brain = Brain::open(db.to_str().unwrap(), None).unwrap();
+        {
+            let conn = brain.storage.lock().unwrap();
+            conn.execute("INSERT INTO inbox (id, content) VALUES ('c1', 'x')", [])
+                .unwrap();
+        }
+        let ctx = RouteContext {
+            now: "2026-07-13T12:00:00".into(),
+            today: "2026-07-13".into(),
+            intentions_cutoff: "2026-07-11T12:00:00".into(),
+            now_sql: "2026-07-13 12:00:00".into(),
+        };
+        brain
+            .route_capture(&json!({"id": "c1", "content": "x"}), &classified, &ctx)
+            .unwrap();
+        brain
+    }
+
+    fn capture_fete(persistance: i64) -> Value {
+        json!({
+            "language": "fr",
+            "atomic_note": "J'ai la fête de Pierre le 20",
+            "atomic_note_kind": "event",
+            "event_date": "2026-07-20",
+            "is_ephemeral": false,
+            "entities": [{
+                "canonical_name": "Pierre",
+                "type": "person",
+                "aliases": [],
+                "facts": [{
+                    "predicate": "attends", "value": "fête",
+                    "persistence_value": persistance,
+                    "evidence_strength": "explicit", "category": "social"
+                }]
+            }],
+            "relations": [],
+            "project_entries": [],
+            "classification_confidence": 1.0
+        })
+    }
+
+    fn compte(brain: &Brain, sql: &str) -> i64 {
+        let conn = brain.storage.lock().unwrap();
+        conn.query_row(sql, [], |r| r.get(0)).unwrap()
+    }
+
+    #[test]
+    fn une_entite_seulement_nommee_est_proposee_et_non_creee() {
+        let brain = router_entite(capture_fete(1));
+        assert_eq!(compte(&brain, "SELECT COUNT(*) FROM entities"), 0,
+                   "« J'ai la fête de Pierre le 20 » ne doit plus fabriquer de fiche");
+        assert_eq!(
+            compte(&brain, "SELECT COUNT(*) FROM entity_creation_proposals \
+                            WHERE canonical_name = 'Pierre' AND status = 'pending'"),
+            1
+        );
+        // La note, elle, est écrite : l'entité attend, la capture non. Sans ça
+        // on remplacerait une fiche de trop par une capture perdue.
+        assert_eq!(compte(&brain, "SELECT COUNT(*) FROM atomic_notes"), 1);
+    }
+
+    #[test]
+    fn un_fait_assez_durable_cree_encore_directement() {
+        // Persistance 4 : au-dessus de MIN_ENTITY_PERSISTENCE. C'est une
+        // preuve, donc aucune question n'est posée.
+        let brain = router_entite(capture_fete(4));
+        assert_eq!(compte(&brain, "SELECT COUNT(*) FROM entities"), 1);
+        assert_eq!(compte(&brain, "SELECT COUNT(*) FROM entity_creation_proposals"), 0);
+    }
+
+    #[test]
+    fn les_faits_dune_entite_proposee_nentrent_pas_dans_les_files() {
+        // Sinon la même chose serait demandée deux fois : une fois « créer
+        // Pierre ? », une fois « ce fait sur Pierre ? ».
+        let brain = router_entite(capture_fete(1));
+        assert_eq!(compte(&brain, "SELECT COUNT(*) FROM pending_facts"), 0);
+        assert_eq!(compte(&brain, "SELECT COUNT(*) FROM review_queue"), 0);
+        assert_eq!(compte(&brain, "SELECT COUNT(*) FROM facts"), 0);
+    }
+
+    #[test]
+    fn accepter_cree_lentite_avec_ses_faits() {
+        let brain = router_entite(capture_fete(1));
+        let id: String = {
+            let conn = brain.storage.lock().unwrap();
+            conn.query_row("SELECT id FROM entity_creation_proposals", [], |r| r.get(0))
+                .unwrap()
+        };
+        let out = brain.accept_entity_creation(&id, "2026-07-13").unwrap();
+        assert_eq!(out["status"], "accepted");
+        assert_eq!(compte(&brain, "SELECT COUNT(*) FROM entities \
+                                   WHERE canonical_name = 'Pierre'"), 1);
+        // Le fait revient, et par le même chemin qu'à la capture : persistance
+        // 1 et evidence explicit le placent sous 0,85, donc en file de faits.
+        assert_eq!(compte(&brain, "SELECT COUNT(*) FROM pending_facts"), 1);
+        assert_eq!(
+            compte(&brain, "SELECT COUNT(*) FROM entity_creation_proposals \
+                            WHERE status = 'accepted' AND created_entity_id IS NOT NULL"),
+            1
+        );
+    }
+
+    #[test]
+    fn refuser_ne_cree_rien_et_ne_redemande_pas() {
+        let brain = router_entite(capture_fete(1));
+        let id: String = {
+            let conn = brain.storage.lock().unwrap();
+            conn.query_row("SELECT id FROM entity_creation_proposals", [], |r| r.get(0))
+                .unwrap()
+        };
+        assert_eq!(brain.reject_entity_creation(&id).unwrap()["status"], "rejected");
+        assert_eq!(compte(&brain, "SELECT COUNT(*) FROM entities"), 0);
+        // Trancher deux fois ne rouvre rien.
+        assert_eq!(brain.reject_entity_creation(&id).unwrap()["status"], "rejected");
+        assert_eq!(brain.accept_entity_creation(&id, "2026-07-13").unwrap()["status"],
+                   "rejected");
+        assert_eq!(compte(&brain, "SELECT COUNT(*) FROM entities"), 0);
+    }
+
+    #[test]
+    fn la_meme_question_ne_sempile_pas() {
+        let brain = router_entite(capture_fete(1));
+        let ctx = RouteContext {
+            now: "2026-07-14T12:00:00".into(),
+            today: "2026-07-14".into(),
+            intentions_cutoff: "2026-07-12T12:00:00".into(),
+            now_sql: "2026-07-14 12:00:00".into(),
+        };
+        {
+            let conn = brain.storage.lock().unwrap();
+            conn.execute("INSERT INTO inbox (id, content) VALUES ('c2', 'x')", [])
+                .unwrap();
+        }
+        brain
+            .route_capture(&json!({"id": "c2", "content": "x"}), &capture_fete(1), &ctx)
+            .unwrap();
+        assert_eq!(compte(&brain, "SELECT COUNT(*) FROM entity_creation_proposals"), 1);
+    }
+
     // route_capture reads `classified["language"]` and persists it on the note.
     // A note-only capture needs neither the embedder nor the network.
     #[test]

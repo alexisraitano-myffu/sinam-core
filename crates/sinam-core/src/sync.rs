@@ -84,6 +84,11 @@ fn synced_tables() -> &'static [(&'static str, &'static str)] {
         // SYN-188 — le nom canonique est ce que l'utilisateur LIT : la
         // proposition doit lui parvenir quel que soit l'appareil qui l'a vue.
         ("entity_rename_proposals", "id"),
+        // Une entité proposée n'existe encore nulle part : la question doit
+        // parvenir à l'appareil où l'utilisateur la lira, et l'arbitrage
+        // revenir. Répliquée comme ses sœurs, donc, et l'entité créée à
+        // l'acceptation se réplique ensuite par la table `entities`.
+        ("entity_creation_proposals", "id"),
         ("project_attach_proposals", "id"),
         ("sync_owner", "id"),
         ("space", "id"),

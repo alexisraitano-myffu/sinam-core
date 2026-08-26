@@ -226,6 +226,37 @@ pub(crate) fn init_schema(conn: &Connection) -> Result<(), rusqlite::Error> {
             created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             resolved_at         TIMESTAMP
         )",
+        // ── Entity creation, proposed instead of applied ────────────────────
+        // Une entité naissait dès qu'elle était simplement NOMMÉE dans une
+        // capture qui laisse une note durable — sans fait, sans lien, sans
+        // antériorité. C'est la seule des quatre conditions qui ne repose sur
+        // aucune preuve, et c'est elle qui créait une fiche sur « J'ai la fête
+        // de Pierre le 20 ».
+        //
+        // Deux différences avec les quatre files sœurs, et elles découlent
+        // toutes les deux du fait que l'objet n'existe PAS encore :
+        //   · aucune clé étrangère vers `entities` — il n'y a rien à pointer.
+        //     `created_entity_id` n'est rempli qu'à l'acceptation ;
+        //   · `entity_data` porte la charge complète du classifieur (nom, type,
+        //     alias, attributs, faits). Sans elle, accepter demanderait de
+        //     rejouer la capture, donc un second appel au modèle pour une
+        //     réponse qu'on avait déjà.
+        //
+        // La proposition de TYPE voyage à l'intérieur, elle n'est pas mise en
+        // file à part : `entity_type_proposals.candidate_entity_id` référence
+        // `entities(id)`, qui n'existe pas tant que personne n'a tranché. Ça
+        // évite au passage de poser deux questions de suite sur le même objet.
+        "CREATE TABLE IF NOT EXISTS entity_creation_proposals (
+            id                  TEXT PRIMARY KEY,
+            canonical_name      TEXT NOT NULL,
+            proposed_type       TEXT,
+            entity_data         TEXT NOT NULL,
+            evidence_capture_id TEXT REFERENCES inbox(id),
+            status              TEXT NOT NULL DEFAULT 'pending',
+            created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            resolved_at         TIMESTAMP,
+            created_entity_id   TEXT REFERENCES entities(id)
+        )",
         // ── SYN-58 — Live entity-type vocabulary + proposals ────────────────
         "CREATE TABLE IF NOT EXISTS active_entity_types (
             type        TEXT PRIMARY KEY,
@@ -431,6 +462,8 @@ pub(crate) fn init_schema(conn: &Connection) -> Result<(), rusqlite::Error> {
          ON entity_rename_proposals(status, created_at DESC)",
         "CREATE INDEX IF NOT EXISTS idx_type_proposals_status \
          ON entity_type_proposals(status, created_at DESC)",
+        "CREATE INDEX IF NOT EXISTS idx_creation_proposals_status \
+         ON entity_creation_proposals(status, created_at DESC)",
         "CREATE INDEX IF NOT EXISTS idx_project_attach_proposals_status \
          ON project_attach_proposals(status, created_at DESC)",
     ];
