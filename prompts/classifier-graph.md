@@ -123,34 +123,34 @@ predicate rules:
   into `value`. "chess_club_membership_date" fits one person and one club and will never be
   used again; "member_since" says as much and still applies next month, to someone else.
 
-obsoleted_facts rules:
-- This is the ONLY way to say that something the memory may already hold has STOPPED being
-  true.
-- FIRST, LOOK FOR A SUCCESSOR IN THE SAME CAPTURE, before you write anything here. If the
-  capture gives the NEW value, it is a REPLACEMENT: emit ONE ordinary fact carrying that new
-  value and leave obsoleted_facts EMPTY. The memory retires the old value by itself, and
-  emitting both does the work twice, once of them wrongly. This holds EVEN WHEN AN EXPLICIT
-  NEGATION MARKER IS PRESENT: "Sofia ne travaille plus chez Initech, elle est maintenant chez
-  Umbrella" and "he moved from Lyon to Nantes" both name the successor, so both leave
-  obsoleted_facts empty.
-- Only a claim left with NO successor belongs here: "Sofia ne travaille plus chez Initech" on
-  its own, "no longer lives in Lyon", "j'ai quitté mon poste", "en fait ce n'est pas son
-  numéro".
-- A plain absence stated for the first time ("Marie n'a pas de chat", "he has no car")
-  denies nothing and teaches nothing durable: emit NO fact and NO obsoleted_facts item.
-- `value` names what stopped holding when the capture says it ("plus chez Acme" → "Acme");
-  use null when it does not ("il n'a plus de téléphone"), which retires the claim entirely.
-- `entity_canonical` MUST name an entity the capture actually names. When the subject is a
-  pronoun with no antecedent ("il a quitté Acme pour Globex", "she moved from Berlin to Hamburg"),
-  there is nobody to retire anything from: leave `obsoleted_facts` EMPTY. Never invent a
-  placeholder like "unknown", "he" or "the person" — it becomes a real row in the memory.
-  The NAMED ENDPOINTS of the change still earn their node in `entities`, subject or no subject,
-  each with the type it would get anywhere else: "Globex" and "Hamburg" are named here, and a
-  replacement whose successor goes unrecorded loses the only durable thing the capture carried.
-- Never put the same claim in both `facts` and `obsoleted_facts`.
-- If the capture only SUGGESTS the change ("je crois qu'il a quitté Acme"), leave it out:
-  hedge it in the note instead. Retiring knowledge on a maybe is worse than keeping it.
-- `obsoleted_facts: []` is the normal answer, and by far the most common one.
+obsoleted_facts rules — the ONLY way to say that something the memory may already hold has
+STOPPED being true. Read these IN ORDER and stop at the first that matches.
+1. IS IT A RENAME? "mon projet ne s'appelle plus Synapse mais Sinam", "Acme has been renamed
+   Globex" → that is `renamed_to` on the entity, and NOTHING goes here. A change of NAME is not a
+   change of fact, and the negation marker in the phrasing does not make it one.
+2. IS THERE A SUCCESSOR IN THE SAME CAPTURE? Then it is a REPLACEMENT, and a replacement takes
+   BOTH: emit an ordinary fact carrying the NEW value, AND an obsoletion of the OLD one. "Pierre
+   ne travaille plus chez Acme, il est maintenant chez Globex" → fact works_at=Globex AND
+   obsoleted works_at=Acme. Never assume the memory will retire the old value on its own; it does
+   that only for the handful of claims it knows can hold one value at a time, and everything else
+   would end up carrying two truths at once. A departure marker is not a negation, it is a
+   replacement: "he moved from Lyon to Nantes", "il a quitté Acme pour Globex" name a successor
+   just as plainly as an explicit "ne … plus … maintenant".
+3. IS THE SUBJECT NAMEABLE? An obsoletion needs `entity_canonical`, and it must name someone the
+   capture actually names. A BARE pronoun with nobody to refer to ("il a quitté…", "she moved…")
+   leaves `obsoleted_facts` EMPTY. Never invent "unknown", "he" or "the person" — it becomes a
+   real row in the memory.
+4. ONLY THEN: a claim left with NO successor belongs here, in ANY language — the marker is what
+   matters, never the language it is in. FR "ne … plus", "j'ai quitté", "en fait ce n'est pas" ;
+   EN "no longer", "not … any more" ; ES "ya no" ("Sofía ya no vive en Madrid" → obsoleted
+   lives_in Madrid) ; and their equivalents elsewhere. `value` names what stopped holding when the capture says it ("plus chez Acme" →
+   "Acme"); use null when it does not ("il n'a plus de téléphone"), which retires the claim
+   entirely.
+Never put the same claim in both `facts` and `obsoleted_facts`. A plain absence stated for the
+first time ("Marie n'a pas de chat", "he has no car") denies nothing and teaches nothing durable:
+no fact, no obsoletion. A change only SUGGESTED ("je crois qu'il a quitté Acme") stays out and is
+hedged in the note instead — retiring knowledge on a maybe is worse than keeping it.
+`obsoleted_facts: []` is the normal answer, and by far the most common one.
 
 persistence_value rules:
 5 = permanent (birth date, family tie, first name)
@@ -166,6 +166,11 @@ This ladder decides whether something DESERVES a node — people, places, object
 persistence, not whether a proper noun is present. A pet living with someone ("my cat is called
 Gipsy") → 4-5, so it becomes an entity. An animal crossed once ("a bear at the zoo called
 Balthazar") → 1, so it stays a passing mention and gets no node.
+ONE THING SKIPS THE LADDER: the NAMED ENDPOINTS OF A CHANGE. Whatever someone left and whatever
+they joined, wherever they moved from and to, each earns its node with the type it would get
+anywhere else — "il a quitté Acme pour Globex" gives BOTH Acme and Globex, "she moved from Berlin
+to Hamburg" gives both cities. This holds even when the capture never names who moved: a change
+whose endpoints go unrecorded loses the only durable thing it carried.
 
 evidence_strength rules (apply to the capture's language, FR/EN/other):
 explicit = fact stated directly, no uncertainty marker

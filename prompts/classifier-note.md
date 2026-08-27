@@ -184,18 +184,28 @@ is_ephemeral=true may coexist with an atomic_note only for rows 1 and 2 (the 48h
 durable note). A kind="note" is NEVER is_ephemeral=true — it would be silently lost.
 
 classification_confidence rule (0.0–1.0):
-Rate your confidence in the chosen ROUTING (atomic_note / atomic_note_kind / is_ephemeral).
-- 1.0 = unambiguous. ~0.9 = clear. < 0.6 = you genuinely hesitate (e.g. a minimal action you're
-  unsure deserves a durable task, or a cryptic / truncated capture).
-- When hesitating on "durable action vs ephemeral": do NOT drop — pick atomic_note_kind="task" and
-  lower classification_confidence (< 0.6). Better a task to validate than a lost intention.
-- A KIND WITHOUT A NOTE IS IMPOSSIBLE. The moment you write atomic_note_kind, atomic_note is NOT
-  null: the two are written together or neither is. "Relancer", "payer le loyer" → kind="task"
-  AND the note, confidence low. A kind sitting beside a null note loses the capture entirely while looking like a
-  decision was made, which is the one outcome nothing downstream can recover from.
+Rate your confidence in the chosen ROUTING (atomic_note / atomic_note_kind / is_ephemeral), and in
+NOTHING else. A capture whose routing is plain stays at 1.0 however terse it is, and whatever else
+in it you happen to be unsure about. TERSE IS NOT CRYPTIC: "relancer" is two plain words and
+routes itself, "rdv jd 14h" is unreadable and must doubt. Length decides nothing; legibility does.
+- 1.0 = unambiguous. ~0.9 = clear. < 0.6 = you genuinely hesitate ON THE ROUTING — a minimal
+  action you are unsure deserves a durable task, a cryptic or truncated capture.
+- Hesitating on "durable action vs ephemeral" is the case that matters: do NOT drop. Pick
+  atomic_note_kind="task" and lower the confidence. Better a task to validate than a lost
+  intention.
+- A KIND WITHOUT A NOTE IS IMPOSSIBLE: the moment you write atomic_note_kind, atomic_note is not
+  null. "Relancer", "payer le loyer" → kind="task" AND the note. A kind beside a null note loses
+  the capture while looking like a decision was made, the one outcome nothing downstream can
+  recover from.
 
-Resolve relative dates to absolute dates.
-Today's date is: {today}.
-A BARE WEEKDAY means its NEXT occurrence counting from today, and today itself is not it. IF
-today is a Monday, THEN "Tuesday" is TOMORROW, not in eight days. Only an explicit "next Tuesday"
-skips to the following week. "today", "tomorrow", "yesterday" resolve straight off the date above.
+Resolve every relative date to an absolute one. Today's date is: {today}.
+THE TENSE DECIDES THE DIRECTION, and nothing else does.
+ · "today", "tomorrow", "yesterday", "this morning", "last night" resolve straight off the date
+   above.
+ · A BARE WEEKDAY ("Tuesday", "mardi") is its NEXT occurrence, and today itself is not it: if
+   today is a Monday, "Tuesday" is TOMORROW, not in eight days. Only an explicit "next Tuesday"
+   skips a week. A PAST tense makes it the LAST one instead ("I saw her Tuesday").
+ · A DAY AND MONTH WITH NO YEAR ("le 12 juin", "on the 24th") takes the year the tense asks for.
+   Past tense → the most recent one already gone: "on s'est mariés le 12 juin" means the 12 June
+   BEFORE today, never the one before that. Present or future → the next one ahead: "le forum est
+   le 26" means the 26th to come. Never a year the capture does not imply.
