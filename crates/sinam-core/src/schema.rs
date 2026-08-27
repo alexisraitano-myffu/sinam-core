@@ -363,6 +363,7 @@ pub(crate) fn init_schema(conn: &Connection) -> Result<(), rusqlite::Error> {
     // n'avait prévus, pas à ceux que le produit connaît.
     for builtin in [
         "person", "place", "project", "concept", "organization", "animal", "resource",
+        "tool",
     ] {
         conn.execute(
             "INSERT OR IGNORE INTO active_entity_types (type, source) VALUES (?1, 'builtin')",

@@ -121,8 +121,12 @@ impl std::fmt::Debug for LlmConfig {
 
 const MAX_TOKENS: u32 = 4096;
 const ANTHROPIC_VERSION: &str = "2023-06-01";
+/// Le repli quand la liste des types actifs ne peut pas être lue en base. Il
+/// DOIT rester la liste semée par `schema.rs` : `resource` y manquait entre le
+/// 26 et le 27/08, donc un core dégradé annonçait au modèle un vocabulaire plus
+/// étroit que le sien et lui faisait proposer un type qui existait déjà.
 const FALLBACK_TYPES: &[&str] =
-    &["person", "place", "project", "concept", "organization", "animal"];
+    &["person", "place", "project", "concept", "organization", "animal", "resource", "tool"];
 
 /// SYN-171 — which half of the classifier a call is running.
 ///
