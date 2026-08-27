@@ -140,6 +140,13 @@ obsoleted_facts rules:
   denies nothing and teaches nothing durable: emit NO fact and NO obsoleted_facts item.
 - `value` names what stopped holding when the capture says it ("plus chez Acme" → "Acme");
   use null when it does not ("il n'a plus de téléphone"), which retires the claim entirely.
+- `entity_canonical` MUST name an entity the capture actually names. When the subject is a
+  pronoun with no antecedent ("il a quitté Acme pour Globex", "she moved from Berlin to Hamburg"),
+  there is nobody to retire anything from: leave `obsoleted_facts` EMPTY. Never invent a
+  placeholder like "unknown", "he" or "the person" — it becomes a real row in the memory.
+  The NAMED ENDPOINTS of the change still earn their node in `entities`, subject or no subject,
+  each with the type it would get anywhere else: "Globex" and "Hamburg" are named here, and a
+  replacement whose successor goes unrecorded loses the only durable thing the capture carried.
 - Never put the same claim in both `facts` and `obsoleted_facts`.
 - If the capture only SUGGESTS the change ("je crois qu'il a quitté Acme"), leave it out:
   hedge it in the note instead. Retiring knowledge on a maybe is worse than keeping it.

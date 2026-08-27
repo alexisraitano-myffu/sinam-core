@@ -39,12 +39,20 @@ Otherwise atomic_note = null when the capture is:
    Y" ("Marie has a cat Gipsy", "my mother has a new cat"). WHOLE is the condition: a stance
    the author takes on the attribute ("je trouve ça curieux pour quelqu'un d'allergique",
    "which surprised me") is not part of it, so the capture goes to the table and KEEPS its
-   note. The attribute still becomes a fact either way; what the author thinks of it is the
-   part no fact holds.
- · a bare link or reference, with no stance taken on it. BARE is the whole condition, and its
-   mirror matters more than the rule: a link the author said ANYTHING about ("… super intéressant
-   sur la mémoire", "à lire pour le projet", "the part on X is wrong") has a stance on it, so it
-   goes to the table like any other capture and KEEPS its note. What the author said about a link
+   note. A remark about the CORRECTION itself is not such a stance: "en fait Léa ne travaille pas
+   chez Globex, je me suis trompé", "actually that's wrong, my mistake" say nothing about Léa,
+   only that an earlier belief was wrong — the whole content is still the attribute, no note.
+   The attribute still becomes a fact either way; what the author thinks of it is the part no
+   fact holds.
+ · a link. Strip the URL first, mechanically: if NO words remain, no note, and stop here.
+   If words DO remain, in any language and however few, what happens depends on what the link is:
+     it IS the thing — an article, a video, a paper, a thread ("great read on how memory
+       consolidates", "super intéressant sur la mémoire", "à lire pour le projet") → the words are
+       the author's own take, which no summary of the page can reproduce → table, KEEP the note.
+     it POINTS AT something that already has its own identity — a place, a shop, a tool, a company
+       ("le restaurant Chez Léon, très bon", "the Linear board, that's where we track everything")
+       → the words belong on THAT thing's card, where they will be found again → no note.
+   The URL itself is recorded by the other pass either way, and never competes with the note. What the author said about a link
    is the only thing no summary of the page can reproduce, and it is the first thing lost when the
    link is treated as the whole capture. The URL itself is handled elsewhere and never competes
    with the note: a commented link yields BOTH.
@@ -57,6 +65,9 @@ Otherwise atomic_note = null when the capture is:
    pain ce matin", "went for a run this morning") is caught by its own line below and stays
    noteless, moment or no moment.
  · a SOLITARY ROUTINE ACTIVITY already done — nobody else, no named place, nothing achieved.
+   The three conditions hold TOGETHER, and the middle one is the one that gets forgotten: a place
+   the author bothered to NAME ("j'ai passé l'après-midi au Jardin des Plantes", "spent the
+   afternoon at the Tate") breaks this line on its own, alone or not → table, row 3.
    A chore ("I bought bread", "I did the dishes") or an ordinary session ("went for a run this
    morning, felt good") → no note, and NOT is_ephemeral: it is done, not pending
  · a habit or a biographical trait with no situated moment ("I played piano as a child", "I used to
@@ -104,6 +115,10 @@ order IS the rule: it settles every conflict, so never weigh two rows against ea
     · task vs event: a task you DO (active), an event you ATTEND (passive). A verb proves nothing —
       ask who acts on what.
     · event_date = ABSOLUTE (resolve "Tuesday" via {today})
+    · REPORTED SPEECH changes who said it, never WHAT it is: "Hugo m'a dit que la réunion était
+      mardi", "Marie told me the show is on the 3rd" are dated occurrences reported by someone —
+      still this row, still event_date. Row 1 already does this for tasks; an event is no less an
+      event for having been told to you.
     · BIRTHDAYS — three wordings, three answers, nothing to weigh:
         a CELEBRATION is named (party, drinks, dinner) → event note, event_recurring=true,
           classification_confidence 1.0
@@ -116,6 +131,10 @@ order IS the rule: it settles every conflict, so never weigh two rows against ea
  3. EPISODE — kind="episode". Something ALREADY LIVED, told for having happened.
     · another NAMED PERSON is in it → episode, always, however ordinary ("I had dinner at Léa's
       yesterday", "I went climbing with Théo"). Do not weigh whether it was interesting.
+      IN IT covers what that person SAID or DID to the author, not only what you did together:
+      "ce que Marc a dit hier m'a blessé", "what Marc said yesterday hurt" is a lived moment with
+      a named person → episode, with its date. The feeling is WHY it is worth keeping, never a
+      reason to demote it to a plain note.
     · nobody else, but a PLACE worth naming, or an ACHIEVEMENT — a first time, a record, a
       measurable result ("my first half-marathon", "got my 6b+") → episode. A FEELING IS NOT AN
       ACHIEVEMENT: "went for a run this morning, felt good" stays routine → no note.
@@ -170,6 +189,10 @@ Rate your confidence in the chosen ROUTING (atomic_note / atomic_note_kind / is_
   unsure deserves a durable task, or a cryptic / truncated capture).
 - When hesitating on "durable action vs ephemeral": do NOT drop — pick atomic_note_kind="task" and
   lower classification_confidence (< 0.6). Better a task to validate than a lost intention.
+- A KIND WITHOUT A NOTE IS IMPOSSIBLE. The moment you write atomic_note_kind, atomic_note is NOT
+  null: the two are written together or neither is. "Relancer", "payer le loyer" → kind="task"
+  AND the note, confidence low. A kind sitting beside a null note loses the capture entirely while looking like a
+  decision was made, which is the one outcome nothing downstream can recover from.
 
 Resolve relative dates to absolute dates.
 Today's date is: {today}.
