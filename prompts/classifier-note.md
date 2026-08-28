@@ -4,31 +4,36 @@ facts or relations — another pass does that, and it can never contradict you.
 Detect the capture's language and echo it as `language` (ISO 639-1: fr, en, es, de, …).
 The language is that of the SENTENCE, never that of the names inside it: a French first name
 in an English sentence leaves the capture English, and the other way round.
-Write `atomic_note` in the SAME language as the capture. Never translate the user's words.
-`atomic_note_kind` stays English — it is an interlingua token, not prose.
+Write every memory's `note` in the SAME language as the capture. Never translate the user's
+words. `kind` stays English — it is an interlingua token, not prose.
 
 Return ONLY valid JSON (no markdown):
 {
   "language": "ISO 639-1 code of the capture's language",
-  "atomic_note": "string or null — the thought kept as its own node, IN THE CAPTURE'S LANGUAGE",
-  "atomic_note_kind": "note|task|event|episode (qualifies a non-null atomic_note; default: note)",
-  "atomic_note_owner": "null (the author — the normal case) or the NAME of the person the action belongs to, when the capture reports someone else's action",
-  "event_date": "YYYY-MM-DD or null (for an event: the occurrence date; for a task: its deadline)",
-  "event_recurring": false,
+  "memories": [
+    {
+      "note": "string — one thought kept as its own node, IN THE CAPTURE'S LANGUAGE",
+      "kind": "note|task|event|episode",
+      "owner": "null (the author — the normal case) or the NAME of the person the action belongs to, when the capture reports someone else's action",
+      "event_date": "YYYY-MM-DD or null (for an event: the occurrence date; for a task: its deadline)",
+      "event_recurring": false,
+      "summary": "string — one sentence describing this note, in its language"
+    }
+  ],
   "is_ephemeral": false,
-  "ephemeral_content": "string or null — the reminder text when is_ephemeral is true, in the capture's language, in the user's own words. It NEVER replaces atomic_note: fill both",
-  "summary": "string or null — one sentence describing atomic_note, in its language. NULL whenever atomic_note is null",
-  "cancels_action": "string or null — the action the capture CALLS OFF, in the capture's own words. See below",
+  "ephemeral_content": "string or null — the reminder text when is_ephemeral is true, in the capture's language, in the user's own words. It NEVER replaces a memory: fill both",
+  "cancels_action": "string or null — the action a capture CALLS OFF. Rule at the end of this file",
   "classification_confidence": 1.0
 }
 
-Exactly ONE atomic_note per capture, or none.
+ONE memory is the normal answer, and an empty list the second most normal. HOW MANY, and when a
+second one is owed, is settled at the END of this file: decide the routing first.
 
 Three text fields, three destinations, never interchangeable, and never a substitute for one
-another. `atomic_note` is what the memory keeps. `ephemeral_content` is what expires in 48h, and
-an ephemeral capture still fills `atomic_note`. `summary` describes `atomic_note` and exists only
-alongside it. A capture you decided not to keep leaves BOTH `atomic_note` and `summary` null:
-never move its content into another field just to avoid returning an empty one.
+another. A memory's `note` is what the memory keeps. `ephemeral_content` is what expires in 48h,
+and an ephemeral capture still fills its memories. A memory's `summary` describes its own `note`
+and exists only alongside it. A capture you decided not to keep returns an EMPTY list: never move
+its content into another field just to avoid returning one.
 
 GATE — check this FIRST, before the table. It is TWO lists, read IN ORDER. The first says what
 survives the gate, the second what it drops. Nothing in the second list can undo the first: an
@@ -75,7 +80,7 @@ KEEPS its note. Stop reading the gate.
    place ("cartons au sous-sol", "clés chez le voisin", "boxes in the basement") → table, row 4.
    The author is recording where things stand, and no card exists that would hold it.
 
-CLOSES THE GATE — read this list ONLY if nothing above matched. Then atomic_note = null when the
+CLOSES THE GATE — read this list ONLY if nothing above matched. Then `memories` is EMPTY when the
 capture is:
  · a statement whose whole content is an attribute of someone or something, "X has / is / does Y"
    ("Marie has a cat Gipsy", "my mother has a new cat", "Pierre travaille chez Acme"). The
@@ -103,10 +108,10 @@ order IS the rule: it settles every conflict, so never weigh two rows against ea
  0. PROJECT — a MULTI-step or long-running undertaking, or anything the capture itself calls a
     project ("learn Japanese", "climb a 7a", "renovate the flat", "new project: X"), is a PROJECT
     and NEVER a mere task. "project" IS NOT A KIND — another pass records the project itself.
-    Here you emit only its founding statement: go to row 4, atomic_note_kind = "note".
+    Here you emit only its founding statement: go to row 4, kind = "note".
 
  1. TASK — kind="task". Something still TO DO, by whoever must do it. Every action still to do
-    yields atomic_note != null AND kind="task", EXCEPT the one narrow case closing this row.
+    yields a memory AND kind="task", EXCEPT the one narrow case closing this row.
     A DATE ENDS THAT EXCEPTION BEFORE IT IS READ. "faut que j'aille faire les courses demain",
     "prendre du pain samedi" keep the note, kind="task" and their event_date — AND stay
     is_ephemeral=true as well, both at once. Saying WHEN is the author asking to be reminded, and
@@ -118,10 +123,10 @@ order IS the rule: it settles every conflict, so never weigh two rows against ea
     · two words, the imperative or the 2nd person still count
     · with a due date → kind stays "task", fill event_date. A dated task is NOT an event.
     · reported speech gives the action to SOMEONE ELSE ("Marie told me she had to call the
-      dentist") → keep the task AND set atomic_note_owner to that person's name. The name is
+      dentist") → keep the task AND set its `owner` to that person's name. The name is
       what keeps it off the author's own list; leave it null and it becomes the author's.
     · a NAME IN FRONT of the actions ("Léa : changer les serrures, appeler l'électricien") does
-      the same as reported speech: it says WHOSE they are → atomic_note_owner = that name.
+      the same as reported speech: it says WHOSE they are → `owner` = that name.
     Falls through, and only here:
     · an action CANCELLED → row 4. Announcing one is NOT a task to do, however active the verb
       looks ("j'annule la réunion de demain", "I'm cancelling tomorrow's meeting", "I'm finally
@@ -132,10 +137,10 @@ order IS the rule: it settles every conflict, so never weigh two rows against ea
       chore, STILL TO DO, in the infinitive or the imperative ("buy bread", "buy milk", "take the
       bins out"), or stated as a NEED rather than an action ("ma voiture a besoin d'un lavage",
       "the bins need taking out"), with no name, no date and nothing owed to anyone
-      → atomic_note = null AND is_ephemeral = true, together.
+      → NO memory AND is_ephemeral = true, together.
       DURABLE EQUIPMENT IS NOT A CONSUMABLE. "buy a harness", "buy a desk", "buy running shoes"
       involve a choice and a price: they are TASKS with a note, not errands that expire.
-      In the PAST it is done, not pending ("I bought bread this morning") → atomic_note = null and
+      In the PAST it is done, not pending ("I bought bread this morning") → no memory and
       is_ephemeral = FALSE; marking it true would resurrect it as a reminder to do what is done.
       Anything SENT, PAID, FILED, DECLARED, or ADDRESSED to a person or an organization is a
       COMMITMENT and stays a task, however short the phrasing and whatever the name looks like —
@@ -195,7 +200,7 @@ order IS the rule: it settles every conflict, so never weigh two rows against ea
       lately") → NO note at all, row 5. Same test as row 3: is there anything to come back to?
     · the founding statement of a project, so it opens with a first entry instead of an empty shell
 
- 5. NOTHING — atomic_note = null. No row matched, and the gate already named the usual cases.
+ 5. NOTHING — `memories` stays EMPTY. No row matched, and the gate already named the usual cases.
 
 A CAPTURE RICH IN PEOPLE, PLACES AND FACTS IS THE CASE WHERE THE NOTE MATTERS MOST, NOT LEAST.
 Another pass extracts all of that. It cannot take the note away from you, and you must never
@@ -215,23 +220,23 @@ DEFAULT false. Set it true ONLY when ALL FOUR hold at once:
  · no durable content
 Any one missing ⇒ is_ephemeral=false, mechanically. A URL, a statement, a reported sentence, an
 anniversary, a past action: none carries such a verb, so none of them is ever ephemeral.
-is_ephemeral=true may coexist with an atomic_note only for rows 1 and 2 (the 48h reminder AND the
+is_ephemeral=true may coexist with a memory only for rows 1 and 2 (the 48h reminder AND the
 durable note). A kind="note" is NEVER is_ephemeral=true — it would be silently lost.
 
 classification_confidence rule (0.0–1.0):
-Rate your confidence in the chosen ROUTING (atomic_note / atomic_note_kind / is_ephemeral), and in
+Rate your confidence in the chosen ROUTING (which memories, their kinds, is_ephemeral), and in
 NOTHING else. A capture whose routing is plain stays at 1.0 however terse it is, and whatever else
 in it you happen to be unsure about. TERSE IS NOT CRYPTIC: "relancer" is two plain words and
 routes itself, "rdv jd 14h" is unreadable and must doubt. Length decides nothing; legibility does.
 - 1.0 = unambiguous. ~0.9 = clear. < 0.6 = you genuinely hesitate ON THE ROUTING — a minimal
   action you are unsure deserves a durable task, a cryptic or truncated capture.
 - Hesitating on "durable action vs ephemeral" is the case that matters: do NOT drop. Pick
-  atomic_note_kind="task" and lower the confidence. Better a task to validate than a lost
+  kind="task" and lower the confidence. Better a task to validate than a lost
   intention.
-- A KIND WITHOUT A NOTE IS IMPOSSIBLE: the moment you write atomic_note_kind, atomic_note is not
-  null. "Relancer", "payer le loyer" → kind="task" AND the note. A kind beside a null note loses
-  the capture while looking like a decision was made, the one outcome nothing downstream can
-  recover from.
+- A KIND WITHOUT A NOTE IS IMPOSSIBLE: a memory always carries a non-empty `note`. "Relancer",
+  "payer le loyer" → one memory, kind="task", note filled. An entry with a kind and an empty note
+  loses the capture while looking like a decision was made, the one outcome nothing downstream can
+  recover from: return an empty LIST instead.
 
 <!-- DATES:DEBUT — bloc partagé mot pour mot par les deux moitiés.
      Un contrôle du harnais échoue si les deux copies divergent d'un caractère. -->
@@ -265,3 +270,22 @@ euh non oublie"); something DONE ("c'est fait"); a correction of a FACT ("en fai
 pas chez Globex"); a POSTPONEMENT ("finalement je l'appelle demain plutôt"), where the task lives
 and only its date moves. Null when in doubt: what goes here can retire a task the author no longer
 sees.
+
+HOW MANY MEMORIES. One is the normal answer, and an empty list is the second most normal: a
+capture you decided not to keep returns `memories: []` and nothing else, never a memory with an
+empty note.
+
+A SECOND memory only when the capture would need two SEPARATE LINES in a notebook — because one
+is already done and the other is still to do, because they are owed to different people, or
+because closing one would say nothing about the other:
+ · "J'ai appelé le dentiste ce matin, il faut que je rappelle jeudi" → the episode AND the task.
+   The call already happened; the callback has not.
+ · "Faut que je rappelle Nadia pour le devis et que j'envoie le dossier à Laurent avant jeudi" →
+   two tasks. Merging them makes ONE line whose closing retires both, and hangs Laurent's
+   Thursday on Nadia's call.
+Order them as the capture states them.
+
+ONE memory whenever the second sentence only DESCRIBES the first ("j'ai vu Marc et on a parlé du
+projet" is one moment, "Marc devrait changer de poste, il n'est pas heureux là-bas" is one
+opinion). Never split a thing into its parts: the test is whether closing or forgetting one would
+leave the other standing. Three memories is almost never right.

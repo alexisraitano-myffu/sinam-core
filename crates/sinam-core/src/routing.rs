@@ -209,6 +209,9 @@ pub struct RouteReport {
     /// step5 accumulates across the run.
     pub new_facts: Vec<Value>,
     pub created_note_id: Option<String>,
+    /// SYN-207 — tous les souvenirs écrits, le premier restant sous
+    /// `created_note_id` pour tout ce qui n'en attendait qu'un.
+    pub created_note_ids: Vec<String>,
     pub project_syntheses: Vec<ProjectSynthesis>,
     pub fast_exit: bool,
     pub negations: NegationOutcome,
@@ -317,18 +320,20 @@ impl Brain {
         let mut report = RouteReport::default();
 
         let is_ephemeral = truthy(classified.get("is_ephemeral"));
-        let note_kind = classified
-            .get("atomic_note_kind")
-            .and_then(Value::as_str)
-            .filter(|s| !s.is_empty())
-            .unwrap_or("note")
-            .to_string();
-        let atomic = classified
-            .get("atomic_note")
-            .and_then(Value::as_str)
-            .unwrap_or("");
-        let durable_note =
-            !atomic.trim().is_empty() && (note_kind == "task" || note_kind == "event");
+        // SYN-207 — une capture peut laisser PLUSIEURS souvenirs. Ce qui suit
+        // ne lit plus les champs au singulier mais la liste, qui les englobe :
+        // sans `memories`, elle contient exactement le souvenir d'avant.
+        let souvenirs = souvenirs(classified);
+        let note_kind = souvenirs
+            .first()
+            .map(|s| s.kind.clone())
+            .unwrap_or_else(|| "note".to_string());
+        // « La capture laisse-t-elle quelque chose de durable ? » se lit
+        // maintenant sur TOUS ses souvenirs : un seul suffit, sinon un épisode
+        // accompagné d'une tâche perdrait la garde que la tâche lui apporte.
+        let durable_note = souvenirs
+            .iter()
+            .any(|s| s.kind == "task" || s.kind == "event");
 
         let conn = self.storage.lock()?;
 
@@ -371,7 +376,7 @@ impl Brain {
         }
 
         conn.execute_batch("BEGIN")?;
-        let mut pending_note_vec: Option<(String, String)> = None;
+        let mut pending_note_vecs: Vec<(String, String)> = Vec::new();
         let r = (|| -> Result<(), CoreError> {
             if let Some(resolved) = &resolved {
                 // Ce qui compte ici n'est pas la survie d'un ÉPHÉMÈRE — c'est le
@@ -382,7 +387,7 @@ impl Brain {
                 // « Bibliothèque Forney », sans fiche et sans question, alors
                 // qu'une entité nommée dans une note durable était au moins
                 // proposée.
-                let ancre_une_fiche = !atomic.trim().is_empty();
+                let ancre_une_fiche = !souvenirs.is_empty();
                 report.entity_ids =
                     self.step4_route(&conn, classified, resolved, capture_id, ancre_une_fiche, ctx)?;
             }
@@ -395,9 +400,16 @@ impl Brain {
             // never runs on.
             report.negations = self.apply_negations(&conn, classified, capture_id)?;
 
-            // Atomic note (SYN-56/58/85 gates).
+            // Atomic note (SYN-56/58/85 gates), une par souvenir (SYN-207).
             let mut created_note_id: Option<String> = None;
-            if !atomic.trim().is_empty() && (!is_ephemeral || durable_note) {
+            for souvenir in &souvenirs {
+                if is_ephemeral && !(souvenir.kind == "task" || souvenir.kind == "event") {
+                    // La garde de l'éphémère se lit souvenir par souvenir, pas
+                    // sur la capture entière : sinon une tâche durable ferait
+                    // survivre la note contemplative qui l'accompagne.
+                    continue;
+                }
+                let note_kind = souvenir.kind.clone();
                 let mut mentioned: Vec<String> = arr(classified.get("entities"))
                     .iter()
                     .filter_map(|e| e.get("canonical_name").and_then(Value::as_str))
@@ -433,7 +445,7 @@ impl Brain {
                 // keeps its recurrence unaided, which is the named celebration the
                 // prompt actually covers. Same shape as « no model-driven
                 // deletion »: here, no model-driven yearly repeat.
-                let recurring = truthy(classified.get("event_recurring"));
+                let recurring = souvenir.recurring;
                 let hesitant = conf < threshold;
                 let (review_status, review_reason) =
                     if recurring && (note_kind != "event" || hesitant) {
@@ -451,15 +463,8 @@ impl Brain {
                 // nothing behind it: the column did not exist, so the note landed in
                 // the author's backlog anyway. NULL means the author, which is also
                 // every row written before today.
-                let owner = classified
-                    .get("atomic_note_owner")
-                    .and_then(Value::as_str)
-                    .map(str::trim)
-                    .filter(|s| !s.is_empty());
-                let summary = classified
-                    .get("summary")
-                    .and_then(Value::as_str)
-                    .unwrap_or("");
+                let owner = souvenir.owner.as_deref();
+                let summary = souvenir.summary.as_str();
                 // SYN-119 — the classifier detects the capture language server-side.
                 let language = classified
                     .get("language")
@@ -467,7 +472,7 @@ impl Brain {
                     .filter(|s| !s.is_empty());
                 let note_id = persist_atomic_note(
                     &conn,
-                    atomic.trim(),
+                    souvenir.texte.as_str(),
                     summary,
                     &mentioned,
                     capture_id,
@@ -475,10 +480,9 @@ impl Brain {
                     // Same normalisation as the fact side: `next_occurrence`
                     // parses ISO strictly, so an event dated "12 juin" never
                     // reaches a notification at all.
-                    classified
-                        .get("event_date")
-                        .and_then(Value::as_str)
-                        .filter(|s| !s.is_empty())
+                    souvenir
+                        .event_date
+                        .as_deref()
                         // SYN-213 — la résolution d'abord, puis l'invariant :
                         // une date issue d'un jour NOMMÉ tombe sur ce jour.
                         .map(|s| {
@@ -497,12 +501,15 @@ impl Brain {
                     owner,
                     language,
                 )?;
-                created_note_id = Some(note_id.clone());
-                let title: String = if summary.is_empty() { atomic.trim() } else { summary }
+                if created_note_id.is_none() {
+                    created_note_id = Some(note_id.clone());
+                }
+                report.created_note_ids.push(note_id.clone());
+                let title: String = if summary.is_empty() { souvenir.texte.as_str() } else { summary }
                     .chars()
                     .take(60)
                     .collect();
-                pending_note_vec = Some((note_id, format!("{title}\n{}", atomic.trim())));
+                pending_note_vecs.push((note_id, format!("{title}\n{}", souvenir.texte)));
             }
             report.created_note_id = created_note_id.clone();
 
@@ -536,7 +543,10 @@ impl Brain {
 
             // Soft project-attach proposal for unrouted actionable captures.
             if seen_projects.is_empty() && (note_kind == "task" || is_ephemeral) {
-                let attach_content = if !atomic.trim().is_empty() { atomic.trim() } else { content };
+                let attach_content = souvenirs
+                    .first()
+                    .map(|s| s.texte.as_str())
+                    .unwrap_or(content);
                 self.propose_project_attach_if_similar(
                     &conn,
                     capture_id,
@@ -674,7 +684,7 @@ impl Brain {
         drop(conn);
 
         // Post-commit, best-effort — mirrors the deferred vec flush.
-        if let Some((note_id, text)) = pending_note_vec {
+        for (note_id, text) in pending_note_vecs {
             if let Some(chunks) = self.embed_chunks(&text) {
                 let _ = self.storage.upsert_note_vectors(&note_id, &chunks);
             }
@@ -689,6 +699,7 @@ impl Brain {
             "entity_ids": report.entity_ids,
             "new_facts": report.new_facts,
             "created_note_id": report.created_note_id,
+            "created_note_ids": report.created_note_ids,
             "fast_exit": report.fast_exit,
             "cancelled_tasks": report.cancelled_tasks,
             "cancellations_proposed": report.cancellations_proposed,
@@ -1997,6 +2008,88 @@ fn decide_cancellation(hits: &[TaskHit], threshold: f64, margin: f64) -> CancelD
         reason: if trop_loin { "approximatif" } else { "ambigu" },
         candidates,
     }
+}
+
+/// Un souvenir que la capture laisse : le texte, sa nature, et ce qui pend à lui.
+///
+/// SYN-207. Le schéma n'en portait qu'UN, et le prompt le disait en toutes
+/// lettres, alors qu'une capture réelle en porte souvent deux de natures
+/// différentes. Mesuré sur quatre captures le 2026-08-28 : ce qui gagne est
+/// toujours le souvenir DATÉ et actionnable, ce qui tombe est celui qui n'a ni
+/// date ni action — et quand les deux sont de même nature, ils FUSIONNENT en
+/// une seule ligne, ce qui est pire qu'une perte parce que ça passe pour du
+/// travail bien fait : fermer la tâche les ferme toutes les deux.
+#[derive(Debug, Clone)]
+struct Souvenir {
+    texte: String,
+    kind: String,
+    owner: Option<String>,
+    event_date: Option<String>,
+    recurring: bool,
+    summary: String,
+}
+
+/// Les souvenirs d'une capture, quelle que soit la FORME de la sortie.
+///
+/// `memories` est la forme canonique. Les champs au singulier restent lus en
+/// repli, et ce n'est pas de la politesse : ils sont la sortie de tous les
+/// modèles d'avant ce jour, de toutes les baselines enregistrées, et du
+/// classifieur on-device. Un tableau à un élément se relit exactement comme un
+/// scalaire, donc la bascule n'a pas de moment charnière.
+fn souvenirs(classified: &Value) -> Vec<Souvenir> {
+    let lire = |v: &Value| -> Option<Souvenir> {
+        let texte = v
+            .get("note")
+            .or_else(|| v.get("atomic_note"))
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        if texte.is_empty() {
+            return None;
+        }
+        Some(Souvenir {
+            texte,
+            kind: v
+                .get("kind")
+                .or_else(|| v.get("atomic_note_kind"))
+                .and_then(Value::as_str)
+                .filter(|s| !s.is_empty())
+                .unwrap_or("note")
+                .to_string(),
+            owner: v
+                .get("owner")
+                .or_else(|| v.get("atomic_note_owner"))
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(String::from),
+            event_date: v
+                .get("event_date")
+                .and_then(Value::as_str)
+                .filter(|s| !s.is_empty())
+                .map(String::from),
+            recurring: truthy(v.get("event_recurring")),
+            summary: v
+                .get("summary")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string(),
+        })
+    };
+
+    let liste = arr(classified.get("memories"));
+    if !liste.is_empty() {
+        // Deux souvenirs identiques mot pour mot sont une redite du modèle, pas
+        // deux souvenirs : on n'écrit pas deux fois la même ligne.
+        let mut vus: HashSet<String> = HashSet::new();
+        return liste
+            .iter()
+            .filter_map(lire)
+            .filter(|s| vus.insert(s.texte.to_lowercase()))
+            .collect();
+    }
+    lire(classified).into_iter().collect()
 }
 
 struct Resolved {
@@ -4140,6 +4233,106 @@ mod tests {
             0
         );
         assert_eq!(compte(&brain, "SELECT COUNT(*) FROM atomic_notes"), 1);
+    }
+
+    // ── Une capture peut laisser PLUSIEURS souvenirs ────────────────────
+
+    /// « J'ai appelé le dentiste ce matin, il faut que je rappelle jeudi » :
+    /// un épisode vécu ET une tâche datée.
+    fn deux_souvenirs() -> Value {
+        let mut c = abandon();
+        c["memories"] = json!([
+            {"note": "J'ai appelé le dentiste ce matin", "kind": "episode",
+             "event_date": "2026-07-13", "summary": "Appel au dentiste."},
+            {"note": "Rappeler le dentiste jeudi", "kind": "task",
+             "event_date": "2026-07-16", "summary": "Rappel à passer."}
+        ]);
+        c
+    }
+
+    #[test]
+    fn deux_souvenirs_font_deux_notes() {
+        // Mesuré le 28/08 sur trois formes : le moteur gardait toujours le
+        // souvenir DATÉ et actionnable, et perdait celui qui n'avait ni date
+        // ni action. Le champ était singulier, aucune règle de prompt ne
+        // pouvait y changer quoi que ce soit.
+        let brain = router_contenu(
+            "J'ai appelé le dentiste ce matin, il faut que je rappelle jeudi",
+            deux_souvenirs(),
+        );
+        assert_eq!(compte(&brain, "SELECT COUNT(*) FROM atomic_notes"), 2);
+        assert_eq!(
+            compte(&brain, "SELECT COUNT(*) FROM atomic_notes WHERE kind = 'episode'"),
+            1,
+            "l'épisode vécu est celui qui se perdait"
+        );
+        assert_eq!(
+            compte(&brain, "SELECT COUNT(*) FROM atomic_notes WHERE kind = 'task'"),
+            1
+        );
+        // Chacun garde SA date : c'est l'autre moitié du défaut, l'échéance
+        // d'un souvenir se collait à l'autre quand les deux fusionnaient.
+        let conn = brain.storage.lock().unwrap();
+        let d: String = conn
+            .query_row(
+                "SELECT event_date FROM atomic_notes WHERE kind = 'task'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(d.starts_with("2026-07-16"), "date de la tâche : {d}");
+    }
+
+    #[test]
+    fn la_forme_au_singulier_reste_lue() {
+        // Tous les modèles d'avant ce jour, toutes les baselines enregistrées
+        // et le classifieur on-device écrivent encore les champs au singulier.
+        // Un tableau à un élément se relit comme un scalaire, donc la bascule
+        // n'a pas de moment charnière.
+        let mut c = abandon();
+        c["atomic_note"] = json!("Rappeler le dentiste jeudi");
+        c["atomic_note_kind"] = json!("task");
+        c["event_date"] = json!("2026-07-16");
+        let brain = router_contenu("il faut que je rappelle jeudi", c);
+        assert_eq!(compte(&brain, "SELECT COUNT(*) FROM atomic_notes"), 1);
+        assert_eq!(
+            compte(&brain, "SELECT COUNT(*) FROM atomic_notes WHERE kind = 'task'"),
+            1
+        );
+    }
+
+    #[test]
+    fn un_souvenir_redit_deux_fois_nen_fait_quun() {
+        // Le risque symétrique de la perte : un classifieur qui hache la
+        // capture. La redite mot pour mot est celle qu'on peut écarter sans
+        // rien arbitrer.
+        let mut c = abandon();
+        c["memories"] = json!([
+            {"note": "Rappeler le dentiste jeudi", "kind": "task"},
+            {"note": "rappeler le dentiste JEUDI", "kind": "task"}
+        ]);
+        let brain = router_contenu("il faut que je rappelle jeudi", c);
+        assert_eq!(compte(&brain, "SELECT COUNT(*) FROM atomic_notes"), 1);
+    }
+
+    #[test]
+    fn lephemere_se_lit_souvenir_par_souvenir() {
+        // Une capture éphémère qui porte AUSSI une tâche durable : la tâche
+        // s'écrit, la note contemplative qui l'accompagne non. Lue sur la
+        // capture entière, la garde laissait passer les deux.
+        let mut c = abandon();
+        c["is_ephemeral"] = json!(true);
+        c["memories"] = json!([
+            {"note": "Acheter du pain", "kind": "note"},
+            {"note": "Payer le loyer avant vendredi", "kind": "task",
+             "event_date": "2026-07-17"}
+        ]);
+        let brain = router_contenu("acheter du pain, payer le loyer avant vendredi", c);
+        assert_eq!(compte(&brain, "SELECT COUNT(*) FROM atomic_notes"), 1);
+        assert_eq!(
+            compte(&brain, "SELECT COUNT(*) FROM atomic_notes WHERE kind = 'task'"),
+            1
+        );
     }
 
     // ── Une capture qui n'a rien laissé ─────────────────────────────────
