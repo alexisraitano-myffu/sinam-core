@@ -33,6 +33,18 @@ use crate::storage::{search_entities_on, search_live_tasks_on, Storage, TaskHit}
 // Same tunables and defaults as cycle.py; the env overrides keep working
 // because host and core share the process environment.
 const MIN_ENTITY_PERSISTENCE: f64 = 2.0;
+
+/// Le palier exigé quand l'entité n'a RIEN d'autre pour elle : inconnue, vue
+/// une seule fois, un seul fait.
+///
+/// La persistance mesure la nature de ce qui est affirmé, pas ce qu'on sait de
+/// l'entité, donc à 2 elle laissait naître une fiche sur « Vivatech c'est le
+/// 24 » — un fait de persistance 3, qui n'était que la date redite. 4 est le
+/// palier que `compute_confidence` traite déjà comme durable (bonus 0,15 contre
+/// 0,05 à 3), et c'est celui qu'un arbitrage antérieur a retenu comme preuve
+/// suffisante à lui seul : « J'ai la fête de Pierre le 20 » porte un fait à 4 et
+/// crée toujours sa fiche.
+const LONE_ENTITY_PERSISTENCE: f64 = 4.0;
 const MERGE_EMBEDDING_THRESHOLD_DEFAULT: f64 = 0.85;
 const PROJECT_ATTACH_THRESHOLD_DEFAULT: f64 = 0.30;
 const PROJECT_ATTACH_MARGIN_DEFAULT: f64 = 0.03;
@@ -362,8 +374,17 @@ impl Brain {
         let mut pending_note_vec: Option<(String, String)> = None;
         let r = (|| -> Result<(), CoreError> {
             if let Some(resolved) = &resolved {
+                // Ce qui compte ici n'est pas la survie d'un ÉPHÉMÈRE — c'est le
+                // sens de `durable_note`, et il reste juste pour ça — mais le
+                // fait que la capture laisse une trace où accrocher une fiche.
+                // Un ÉPISODE en laisse une : il asserte que quelque chose a eu
+                // lieu et nourrit la frise. L'exclure faisait IGNORER
+                // « Bibliothèque Forney », sans fiche et sans question, alors
+                // qu'une entité nommée dans une note durable était au moins
+                // proposée.
+                let ancre_une_fiche = !atomic.trim().is_empty();
                 report.entity_ids =
-                    self.step4_route(&conn, classified, resolved, capture_id, durable_note, ctx)?;
+                    self.step4_route(&conn, classified, resolved, capture_id, ancre_une_fiche, ctx)?;
             }
 
             // SYN-189 — OUTSIDE the `resolved` guard on purpose. A capture whose
@@ -1180,10 +1201,33 @@ impl Brain {
             // une entité qui ancre une note durable retombe sous le garde-fou
             // anti-bruit et disparaît sans laisser de trace. Proposer garde la
             // trace ET rend la main.
-            let preuve = existing.is_some()
-                || relation_names.contains(&canonical.to_lowercase())
-                || max_persistence >= MIN_ENTITY_PERSISTENCE
-                || porteurs_de_lien.contains(&canonical.to_lowercase());
+            // La persistance mesure la NATURE de ce qui est affirmé, pas ce
+            // qu'on sait de l'entité. Un salon est durable en soi, donc
+            // « Vivatech c'est le 24 » fabriquait une fiche sur une seule
+            // mention et un seul fait, qui n'était que la date redite. Les
+            // trois autres clauses, elles, prouvent quelque chose : l'entité
+            // est déjà connue, elle tient dans un lien, ou elle porte une URL
+            // que l'utilisateur a posée lui-même.
+            //
+            // Donc le PALIER monte quand tout est neuf à la fois : entité
+            // inconnue, vue une seule fois, un seul fait. Deux faits, une
+            // deuxième mention, ou un fait vraiment durable, et la fiche naît
+            // comme avant.
+            let connue = existing.is_some();
+            let dans_un_lien = relation_names.contains(&canonical.to_lowercase());
+            let porte_un_lien = porteurs_de_lien.contains(&canonical.to_lowercase());
+            let seule_au_monde = !connue
+                && !dans_un_lien
+                && !porte_un_lien
+                && res.facts.len() <= 1
+                && mention_count <= 1;
+            let palier = if seule_au_monde {
+                LONE_ENTITY_PERSISTENCE
+            } else {
+                MIN_ENTITY_PERSISTENCE
+            };
+            let preuve =
+                connue || dans_un_lien || porte_un_lien || max_persistence >= palier;
             let should_create =
                 preuve || (anchors_durable_note && creation_directe_sans_preuve());
 
@@ -4103,6 +4147,77 @@ mod tests {
         // La note, elle, est écrite : l'entité attend, la capture non. Sans ça
         // on remplacerait une fiche de trop par une capture perdue.
         assert_eq!(compte(&brain, "SELECT COUNT(*) FROM atomic_notes"), 1);
+    }
+
+    /// Une capture qui ne laisse qu'un ÉPISODE, avec une entité que rien
+    /// d'autre ne porte. C'est « J'étais seul à la Bibliothèque Forney hier ».
+    fn capture_lieu_episode(persistance: i64) -> Value {
+        let mut facts = vec![];
+        if persistance > 0 {
+            facts.push(json!({
+                "predicate": "visited", "value": "après-midi",
+                "persistence_value": persistance,
+                "evidence_strength": "explicit", "category": "places"
+            }));
+        }
+        json!({
+            "language": "fr",
+            "atomic_note": "J'étais seul à la Bibliothèque Forney hier",
+            "atomic_note_kind": "episode",
+            "is_ephemeral": false,
+            "entities": [{
+                "canonical_name": "Bibliothèque Forney", "type": "place",
+                "aliases": [], "facts": facts
+            }],
+            "relations": [],
+            "project_entries": [],
+            "classification_confidence": 1.0
+        })
+    }
+
+    #[test]
+    fn un_lieu_dun_episode_est_propose_et_non_ignore() {
+        // Avant : `durable_note` ne valait que pour `task` et `event`, donc un
+        // épisode n'ancrait rien, donc la fiche n'était ni créée NI proposée.
+        // Elle disparaissait sans question. Or un épisode asserte que quelque
+        // chose a eu lieu : il ancre autant qu'une tâche.
+        let brain = router_entite(capture_lieu_episode(0));
+        assert_eq!(compte(&brain, "SELECT COUNT(*) FROM entities"), 0);
+        assert_eq!(
+            compte(&brain, "SELECT COUNT(*) FROM entity_creation_proposals \
+                            WHERE canonical_name = 'Bibliothèque Forney' \
+                            AND status = 'pending'"),
+            1
+        );
+        // Et la note de l'épisode est écrite quoi qu'il arrive : c'est la
+        // fiche qui attend, pas la capture.
+        assert_eq!(compte(&brain, "SELECT COUNT(*) FROM atomic_notes"), 1);
+    }
+
+    #[test]
+    fn une_mention_unique_sans_detail_ne_fabrique_plus_de_fiche() {
+        // « Vivatech c'est le 24 » : un seul fait, de persistance 3, qui n'est
+        // que la date redite. Ça passait le plancher de 2 et créait la fiche.
+        let brain = router_entite(capture_fete(3));
+        assert_eq!(compte(&brain, "SELECT COUNT(*) FROM entities"), 0);
+        assert_eq!(compte(&brain, "SELECT COUNT(*) FROM entity_creation_proposals"), 1);
+    }
+
+    #[test]
+    fn deux_faits_suffisent_encore_a_faire_naitre_une_fiche() {
+        // Le palier ne monte QUE pour une entité seule au monde. Deux faits,
+        // et le plancher habituel s'applique : sans ça on assécherait le
+        // graphe, qui naît surtout de cette clause.
+        let mut c = capture_fete(2);
+        c["entities"][0]["facts"] = json!([
+            {"predicate": "attends", "value": "fête", "persistence_value": 2,
+             "evidence_strength": "explicit", "category": "social"},
+            {"predicate": "lives_in", "value": "Lyon", "persistence_value": 2,
+             "evidence_strength": "explicit", "category": "places"}
+        ]);
+        let brain = router_entite(c);
+        assert_eq!(compte(&brain, "SELECT COUNT(*) FROM entities"), 1);
+        assert_eq!(compte(&brain, "SELECT COUNT(*) FROM entity_creation_proposals"), 0);
     }
 
     #[test]
