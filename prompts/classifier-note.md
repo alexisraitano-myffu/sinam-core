@@ -64,6 +64,12 @@ KEEPS its note. Stop reading the gate.
  · The author's OWN TAKE ON A LINK THAT IS THE THING — an article, a video, a paper, a thread
    ("great read on how memory consolidates", "super intéressant sur la mémoire", "à lire pour le
    projet"). No summary of the page reproduces it → table, KEEP the note.
+ · NO CONJUGATED VERB, in either of these two shapes and only these two.
+   INTENTIONS — bare infinitives, alone or under a name ("Léa : changer les serrures, appeler
+   l'électricien, commander les radiateurs", "call the plumber, book the van") → table, row 1.
+   A STATE OF THE WORLD whose subject is an ORDINARY THING, never a named person, company or
+   place ("cartons au sous-sol", "clés chez le voisin", "boxes in the basement") → table, row 4.
+   The author is recording where things stand, and no card exists that would hold it.
 
 CLOSES THE GATE — read this list ONLY if nothing above matched. Then atomic_note = null when the
 capture is:
@@ -106,6 +112,8 @@ order IS the rule: it settles every conflict, so never weigh two rows against ea
     · reported speech gives the action to SOMEONE ELSE ("Marie told me she had to call the
       dentist") → keep the task AND set atomic_note_owner to that person's name. The name is
       what keeps it off the author's own list; leave it null and it becomes the author's.
+    · a NAME IN FRONT of the actions ("Léa : changer les serrures, appeler l'électricien") does
+      the same as reported speech: it says WHOSE they are → atomic_note_owner = that name.
     Falls through, and only here:
     · an action CANCELLED ("I'm finally not calling the dentist") → row 4
     · a trivial micro-errand — and ONLY the purchase of an ordinary CONSUMABLE or a household
@@ -165,6 +173,8 @@ order IS the rule: it settles every conflict, so never weigh two rows against ea
     · a quote, or an external work / author / idea the author takes a stance on ("Schopenhauer
       says X, but I find Y")
     · a contemplative observation that reduces to no fact ("funny how…", "I noticed that…")
+    · WHERE THINGS STAND, noted with no verb, when nothing would hold it ("cartons au sous-sol",
+      "clés chez le voisin"). It reduces to no fact because its subject has no card of its own.
     · a decision, INCLUDING a decision against something — a cancelled action lands here
     · a FEELING TIED TO A CAUSE the capture names, when no row above already took it ("having to
       present to the board makes me anxious", "that decision still bothers me"). What is kept is

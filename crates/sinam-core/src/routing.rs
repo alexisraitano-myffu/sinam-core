@@ -3199,6 +3199,16 @@ mod tests {
             snap_to_named_weekday("2026-07-10T20:00", "des pâtes jeudi soir", today),
             "2026-07-09T20:00"
         );
+        // Mesuré le 28/08 sur le harnais : « avant vendredi » sortait au 18, un samedi.
+        // Le harnais n'exécute pas ce fichier, il continuera de l'afficher en écart.
+        assert_eq!(
+            snap_to_named_weekday(
+                "2026-07-18",
+                "faut que j'envoie les papiers à la CAF avant vendredi",
+                today
+            ),
+            "2026-07-17"
+        );
     }
 
     #[test]
