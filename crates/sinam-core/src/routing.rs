@@ -1216,6 +1216,22 @@ impl Brain {
             let connue = existing.is_some();
             let dans_un_lien = relation_names.contains(&canonical.to_lowercase());
             let porte_un_lien = porteurs_de_lien.contains(&canonical.to_lowercase());
+            // Un fait qui n'est QUE la date de l'occurrence ne dit rien de
+            // l'entité au-delà du fait qu'elle a lieu ce jour-là. C'est la
+            // « mention unique sans le moindre détail » de l'arbitrage, et
+            // c'est un discriminant stable, contrairement à la persistance :
+            // mesuré le 2026-08-28, le modèle sort 3 ou 4 sur la MÊME capture
+            // d'une passe à l'autre, donc un palier chiffré tomberait pile sur
+            // la bascule.
+            let date_redite = res.facts.len() == 1
+                && res.facts[0]
+                    .get("predicate")
+                    .and_then(Value::as_str)
+                    .map(|p| {
+                        let p = p.trim().to_lowercase();
+                        p == "event_date" || p == "occurs_on"
+                    })
+                    .unwrap_or(false);
             let seule_au_monde = !connue
                 && !dans_un_lien
                 && !porte_un_lien
@@ -1226,8 +1242,10 @@ impl Brain {
             } else {
                 MIN_ENTITY_PERSISTENCE
             };
-            let preuve =
-                connue || dans_un_lien || porte_un_lien || max_persistence >= palier;
+            let preuve = connue
+                || dans_un_lien
+                || porte_un_lien
+                || (max_persistence >= palier && !(seule_au_monde && date_redite));
             let should_create =
                 preuve || (anchors_durable_note && creation_directe_sans_preuve());
 
@@ -4201,6 +4219,29 @@ mod tests {
         let brain = router_entite(capture_fete(3));
         assert_eq!(compte(&brain, "SELECT COUNT(*) FROM entities"), 0);
         assert_eq!(compte(&brain, "SELECT COUNT(*) FROM entity_creation_proposals"), 1);
+    }
+
+    #[test]
+    fn une_date_redite_ne_prouve_rien_quelle_que_soit_sa_persistance() {
+        // « Vivatech c'est le 24 » : le seul fait est la date de l'occurrence,
+        // qui ne dit rien de l'entité au-delà du jour où elle a lieu. Le
+        // modèle lui donne 3 ou 4 selon la passe, mesuré le 28/08, donc un
+        // palier chiffré tomberait pile sur la bascule.
+        for persistance in [3, 4, 5] {
+            let mut c = capture_fete(persistance);
+            c["entities"][0]["facts"] = json!([{
+                "predicate": "event_date", "value": "2026-07-24",
+                "persistence_value": persistance,
+                "evidence_strength": "explicit", "category": "events"
+            }]);
+            let brain = router_entite(c);
+            assert_eq!(
+                compte(&brain, "SELECT COUNT(*) FROM entities"),
+                0,
+                "persistance {persistance} : une date redite ne fait pas naître de fiche"
+            );
+            assert_eq!(compte(&brain, "SELECT COUNT(*) FROM entity_creation_proposals"), 1);
+        }
     }
 
     #[test]

@@ -58,7 +58,10 @@ KEEPS its note. Stop reading the gate.
  · ANOTHER PERSON named, with the author or reported by them ("j'ai croisé Sophie au supermarché",
    "Marc est venu à la réunion hier", "Nadia rigole") → table, row 3.
  · SOMETHING ACHIEVED — a first, a record, a measurable result, an effort that succeeded ("j'ai
-   réussi à être debout avant 6h", "ran my first 10k") → table, row 3.
+   réussi à être debout avant 6h", "ran my first 10k") → table, row 3. It counts even when the
+   same breath also states a TRAIT or a HABIT ("hier j'ai remarqué que je suis matinal, j'ai
+   réussi à être debout avant 6h"): the trait is what the author is, the achievement is what
+   happened, and this list is read first.
  · A THING THE AUTHOR WAS WAITING ON HAS MOVED, said with WHEN ("le devis est parti ce matin",
    "the quote went out this morning") → dated episode, table row 3. A chore the author simply did
    is not one of these.
