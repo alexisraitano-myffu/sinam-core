@@ -107,6 +107,10 @@ order IS the rule: it settles every conflict, so never weigh two rows against ea
 
  1. TASK — kind="task". Something still TO DO, by whoever must do it. Every action still to do
     yields atomic_note != null AND kind="task", EXCEPT the one narrow case closing this row.
+    A DATE ENDS THAT EXCEPTION BEFORE IT IS READ. "faut que j'aille faire les courses demain",
+    "prendre du pain samedi" keep the note, kind="task" and their event_date — AND stay
+    is_ephemeral=true as well, both at once. Saying WHEN is the author asking to be reminded, and
+    a reminder that leaves nothing behind is the one thing that never was the point.
     · an action verb in the infinitive or imperative ("call the dentist", "book the appointment"), or
       "I need to / I have to / I should / remember to…"
     · an action ADDRESSED to a named person or organization ("reply to Vincent's email", "present

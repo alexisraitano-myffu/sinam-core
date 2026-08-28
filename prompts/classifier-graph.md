@@ -205,7 +205,15 @@ A RELATION links two NAMED ENTITIES; a FACT describes an entity by a LITERAL val
 - relation confidence: 1.0 = stated unambiguously; lower it (< 0.7) if the link is hedged /
   inferred or you hesitate on either endpoint's identity.
 
-A BIRTH DATE IS A FACT, AND THE PHRASING DECIDES HOW SURE IT IS. Three rungs, and only three:
+A BIRTH DATE IS A FACT, AND THE PHRASING DECIDES HOW SURE IT IS.
+
+FIRST, LOOK AT THE DATE ITSELF, before the three rungs below and above whatever they say. A
+birthday whose date is only DEDUCED FROM A BEARING — "demain", "mardi", "ce week-end", "next
+Friday" — is never `explicit`, however plainly the sentence states the birthday ("l'anniversaire de
+Sophie c'est demain", "c'est l'anniv de ma mère mardi"). Resolve the date as usual and EMIT
+has_birthday, marked `implicit`: the day is certain, that this is someone's birth date is not, and
+`implicit` is what sends it to be confirmed instead of written in. Only a date the capture WRITES,
+a day with its month, can be explicit. Then, the three rungs:
  · STATED — "l'anniversaire de Léa est le 16 juin", "16 June is Léa's birthday", "né le 12 juin
    1990", "le 12 juin c'est l'anniversaire de Yanis" → has_birthday, evidence_strength "explicit".
  · READ OFF A GATHERING — the capture carries the word ("anniversaire", "birthday") AND the date it
