@@ -484,6 +484,10 @@ impl Brain {
                         .map(|s| {
                             let iso = resolve_date(s, &ctx.today);
                             let iso = snap_bare_day_month(&iso, content, &ctx.today);
+                            // SYN-220 — le mois avant le jour de semaine : le
+                            // recalage de jour travaille à ±3 jours et
+                            // franchirait le mois qu'on vient de choisir.
+                            let iso = snap_bare_day(&iso, content, &ctx.today, &note_kind);
                             snap_to_named_weekday(&iso, content, &ctx.today)
                         })
                         .as_deref(),
@@ -1030,8 +1034,15 @@ impl Brain {
                 let lowered = predicate.to_lowercase();
                 if DATE_PREDICATE_KEYWORDS.iter().any(|kw| lowered.contains(kw)) {
                     if let Some(v) = fact.get("value").and_then(Value::as_str) {
+                        // SYN-220 — le kind vient de la moitié NOTE, lisible ici
+                        // parce que les deux moitiés sont déjà fusionnées. Il
+                        // dit de quel côté d'aujourd'hui un jour nu se range.
+                        let note_kind = classified
+                            .get("atomic_note_kind")
+                            .and_then(Value::as_str)
+                            .unwrap_or("");
                         let resolved =
-                            resolve_fact_date(v, predicate, &ctx.today, capture);
+                            resolve_fact_date(v, predicate, &ctx.today, capture, note_kind);
                         if let Value::Object(m) = &mut fact {
                             m.insert("value".into(), Value::String(resolved));
                         }
@@ -3156,7 +3167,13 @@ fn parse_month_name_date(value: &str) -> Option<(u32, u32, Option<i64>)> {
 /// someone's birth year states something plainly false on their fiche.
 /// Rolling an anniversary forward is `digest::next_occurrence`'s job and it
 /// reads month and day only, so moving the year back costs no notification.
-fn resolve_fact_date(value: &str, predicate: &str, today: &str, capture: &str) -> String {
+fn resolve_fact_date(
+    value: &str,
+    predicate: &str,
+    today: &str,
+    capture: &str,
+    note_kind: &str,
+) -> String {
     let iso = resolve_date(value, today);
     // La fenêtre de douze mois ne s'applique PAS à une naissance ni à un
     // anniversaire : l'année d'une date de naissance ne se déduit d'aucun
@@ -3168,7 +3185,11 @@ fn resolve_fact_date(value: &str, predicate: &str, today: &str, capture: &str) -
     {
         iso
     } else {
-        snap_bare_day_month(&iso, capture, today)
+        let iso = snap_bare_day_month(&iso, capture, today);
+        // SYN-220 — un jour NU sans mois se range du côté qu'ouvre le kind.
+        // Exclu des naissances et anniversaires par la même garde que la
+        // fenêtre d'année, juste au-dessus.
+        snap_bare_day(&iso, capture, today, note_kind)
     };
     let resolved = snap_to_named_weekday(&iso, capture, today);
     let p = predicate.to_lowercase();
@@ -3324,6 +3345,91 @@ fn snap_bare_day_month(date: &str, capture: &str, today: &str) -> String {
         return date.to_string();
     }
     format!("{want:04}-{m:02}-{d:02}{}", &date[10..])
+}
+
+/// The twelve month names the two languages write, lowercased and unaccented
+/// enough to match what a capture actually contains.
+const MONTH_WORDS: [&str; 24] = [
+    "janvier", "fevrier", "mars", "avril", "mai", "juin", "juillet", "aout",
+    "septembre", "octobre", "novembre", "decembre",
+    "january", "february", "march", "april", "may", "june", "july", "august",
+    "september", "october", "november", "december",
+];
+
+/// Does the capture WRITE a month? Accents are folded, so "février" matches.
+fn states_a_month(text: &str) -> bool {
+    let plat: String = text
+        .to_lowercase()
+        .chars()
+        .map(|c| match c {
+            'é' | 'è' | 'ê' | 'ë' => 'e',
+            'à' | 'â' | 'ä' => 'a',
+            'û' | 'ü' | 'ù' => 'u',
+            'î' | 'ï' => 'i',
+            'ô' | 'ö' => 'o',
+            other => other,
+        })
+        .collect();
+    MONTH_WORDS.iter().any(|m| plat.contains(m))
+}
+
+/// A BARE DAY NUMBER with no month resolves inside the month the KIND opens.
+///
+/// SYN-220. « Vivatech c'est le 24 », un lundi 13 juillet, sortait au 24 JUIN,
+/// un mois en arrière. Aucun autre invariant ne l'attrape : le jour est bon,
+/// l'année est bonne, et la capture ne nomme aucun jour de la semaine.
+///
+/// Le temps du verbe tranche, mais on ne le lit pas — il ment (« j'ai réservé
+/// pour le 28 » est au passé et vise le futur). Le KIND, lui, ne ment pas :
+/// un `episode` est par définition déjà vécu, un `event` ou une `task` sont
+/// devant. Sur un `note`, ou sans kind, aucun signal : on ne touche à rien.
+///
+/// On déplace le MOIS, jamais le jour, et seulement si la capture n'écrit
+/// aucun mois. Ne se déclenche jamais sur une date déjà dans la bonne
+/// fenêtre, donc ne restreint rien.
+fn snap_bare_day(date: &str, capture: &str, today: &str, kind: &str) -> String {
+    let vers_le_passe = match kind {
+        "episode" => true,
+        "event" | "task" => false,
+        _ => return date.to_string(),
+    };
+    if date.len() < 10 || today.len() < 10 || states_a_month(capture) {
+        return date.to_string();
+    }
+    let head = &date[0..10];
+    let (Ok(y), Ok(m), Ok(d)) = (
+        head[0..4].parse::<i64>(),
+        head[5..7].parse::<i64>(),
+        head[8..10].parse::<i64>(),
+    ) else {
+        return date.to_string();
+    };
+    // Déjà du bon côté : rien à faire. C'est ce qui rend la règle non
+    // restrictive, et c'est la première chose que le test vérifie.
+    if (head <= today) == vers_le_passe {
+        return date.to_string();
+    }
+    // Le mois voisin, dans le sens que le kind ouvre, et lui seul.
+    let (mut wy, mut wm) = (y, m);
+    if vers_le_passe {
+        wm -= 1;
+        if wm == 0 {
+            wm = 12;
+            wy -= 1;
+        }
+    } else {
+        wm += 1;
+        if wm == 13 {
+            wm = 1;
+            wy += 1;
+        }
+    }
+    // Un 31 n'existe pas dans tous les mois : plutôt rien qu'une date que
+    // `next_occurrence` refusera de lire, ce qui coûterait la notification.
+    if d > month_len(wy, wm) {
+        return date.to_string();
+    }
+    format!("{wy:04}-{wm:02}-{d:02}{}", &date[10..])
 }
 
 /// A date resolved from a NAMED weekday must FALL on that weekday.
@@ -3524,6 +3630,64 @@ mod tests {
     }
 
     #[test]
+    fn un_jour_nu_se_range_du_cote_quouvre_le_kind() {
+        let today = "2026-07-13"; // lundi
+        // Le défaut mesuré : « Vivatech c'est le 24 » sortait au 24 JUIN.
+        assert_eq!(
+            snap_bare_day("2026-06-24", "Vivatech c'est le 24", today, "event"),
+            "2026-07-24"
+        );
+        // Une tâche regarde devant elle aussi.
+        assert_eq!(
+            snap_bare_day("2026-06-24", "envoyer le dossier le 24", today, "task"),
+            "2026-07-24"
+        );
+        // Un épisode est DÉJÀ vécu : il se range en arrière.
+        assert_eq!(
+            snap_bare_day("2026-07-24", "on s'est vus le 24", today, "episode"),
+            "2026-06-24"
+        );
+    }
+
+    #[test]
+    fn le_jour_nu_ne_restreint_rien() {
+        let today = "2026-07-13";
+        // Déjà du bon côté : intacte, dans les deux sens.
+        assert_eq!(
+            snap_bare_day("2026-07-24", "Vivatech c'est le 24", today, "event"),
+            "2026-07-24"
+        );
+        assert_eq!(
+            snap_bare_day("2026-06-24", "on s'est vus le 24", today, "episode"),
+            "2026-06-24"
+        );
+        // Un MOIS écrit : la capture a dit lequel, on ne discute pas.
+        assert_eq!(
+            snap_bare_day("2026-06-24", "Vivatech c'est le 24 juin", today, "event"),
+            "2026-06-24"
+        );
+        // Accents pliés, sinon « février » passerait à travers.
+        assert_eq!(
+            snap_bare_day("2026-02-24", "c'est le 24 février", today, "event"),
+            "2026-02-24"
+        );
+        // Sans signal de kind, on ne touche à rien.
+        for kind in ["note", "", "autre"] {
+            assert_eq!(
+                snap_bare_day("2026-06-24", "le 24", today, kind),
+                "2026-06-24",
+                "kind {kind}"
+            );
+        }
+        // Un 31 qui n'existe pas dans le mois voisin : plutôt rien qu'une
+        // date illisible.
+        assert_eq!(
+            snap_bare_day("2026-03-31", "on s'est vus le 31", "2026-04-10", "episode"),
+            "2026-03-31"
+        );
+    }
+
+    #[test]
     fn snap_restricts_nothing() {
         let today = "2026-07-13";
         // Déjà juste : intacte.
@@ -3662,16 +3826,16 @@ mod tests {
     #[test]
     fn a_birth_date_is_never_in_the_future() {
         let today = "2026-08-20";
-        assert_eq!(resolve_fact_date("2027-07-23", "has_birthday", today, "son anniversaire est le 23 juillet"), "2026-07-23");
+        assert_eq!(resolve_fact_date("2027-07-23", "has_birthday", today, "son anniversaire est le 23 juillet", ""), "2026-07-23");
         // Still ahead after re-anchoring to this year → the year before.
-        assert_eq!(resolve_fact_date("2027-12-25", "birthday", today, "son anniversaire est le 25 décembre"), "2025-12-25");
+        assert_eq!(resolve_fact_date("2027-12-25", "birthday", today, "son anniversaire est le 25 décembre", ""), "2025-12-25");
         // A real birth year is a claim, not an anchor: it stays.
-        assert_eq!(resolve_fact_date("1990-03-03", "has_birthday", today, "né le 3 mars 1990"), "1990-03-03");
+        assert_eq!(resolve_fact_date("1990-03-03", "has_birthday", today, "né le 3 mars 1990", ""), "1990-03-03");
         // 29 February survives only on a leap year — moving it would make the
         // date unparseable, which costs the notification outright.
-        assert_eq!(resolve_fact_date("2028-02-29", "has_birthday", today, "son anniversaire est le 29 février"), "2028-02-29");
+        assert_eq!(resolve_fact_date("2028-02-29", "has_birthday", today, "son anniversaire est le 29 février", ""), "2028-02-29");
         // A deadline or a next appointment is legitimately ahead of us.
-        assert_eq!(resolve_fact_date("2027-07-23", "next_meeting_date", today, "prochaine réunion le 23 juillet 2027"), "2027-07-23");
+        assert_eq!(resolve_fact_date("2027-07-23", "next_meeting_date", today, "prochaine réunion le 23 juillet 2027", ""), "2027-07-23");
     }
 
     #[test]
