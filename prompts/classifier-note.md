@@ -29,51 +29,63 @@ an ephemeral capture still fills `atomic_note`. `summary` describes `atomic_note
 alongside it. A capture you decided not to keep leaves BOTH `atomic_note` and `summary` null:
 never move its content into another field just to avoid returning an empty one.
 
-GATE — check this FIRST, before the table.
-THE GATE NEVER APPLIES TO A CAPTURE CARRYING A DATE. A date makes it an occurrence, which always
-goes to the table, row 2 — whichever way round it is phrased ("12 June is Yanis's birthday",
-"Léa's birthday is 16 June", "the meeting is on Tuesday"), and no matter how many similar captures
-already appear in the context: a date seen before is still a date to remember.
-Otherwise atomic_note = null when the capture is:
- · a statement whose WHOLE content is an attribute of someone or something, "X has / is / does
-   Y" ("Marie has a cat Gipsy", "my mother has a new cat"). WHOLE is the condition: a stance
-   the author takes on the attribute ("je trouve ça curieux pour quelqu'un d'allergique",
-   "which surprised me") is not part of it, so the capture goes to the table and KEEPS its
-   note. A remark about the CORRECTION itself is not such a stance: "en fait Léa ne travaille pas
-   chez Globex, je me suis trompé", "actually that's wrong, my mistake" say nothing about Léa,
-   only that an earlier belief was wrong — the whole content is still the attribute, no note.
-   The attribute still becomes a fact either way; what the author thinks of it is the part no
-   fact holds.
- · a link. Strip the URL first, mechanically: if NO words remain, no note, and stop here.
-   If words DO remain, in any language and however few, what happens depends on what the link is:
-     it IS the thing — an article, a video, a paper, a thread ("great read on how memory
-       consolidates", "super intéressant sur la mémoire", "à lire pour le projet") → the words are
-       the author's own take, which no summary of the page can reproduce → table, KEEP the note.
-     it POINTS AT something that already has its own identity — a place, a shop, a tool, a company
-       ("le restaurant Chez Léon, très bon", "the Linear board, that's where we track everything")
-       → the words belong on THAT thing's card, where they will be found again → no note.
-   The URL itself is recorded by the other pass either way, and never competes with the note. What the author said about a link
-   is the only thing no summary of the page can reproduce, and it is the first thing lost when the
-   link is treated as the whole capture. The URL itself is handled elsewhere and never competes
-   with the note: a commented link yields BOTH.
+GATE — check this FIRST, before the table. It is TWO lists, read IN ORDER. The first says what
+survives the gate, the second what it drops. Nothing in the second list can undo the first: an
+exception written inside the line it contradicts loses to that line, so no exception is written
+there any more.
+
+OPENS THE GATE — read this list FIRST. ONE match is enough: the capture goes to the table and
+KEEPS its note. Stop reading the gate.
+ · A DATE. It makes the capture an occurrence → table, row 2, whichever way round it is phrased
+   ("12 June is Yanis's birthday", "Léa's birthday is 16 June", "the meeting is on Tuesday"), and
+   no matter how many similar captures already appear in the context: a date seen before is still
+   a date to remember.
+ · A STANCE the author takes — a judgement, a preference, a change of mind, an opinion about
+   someone or something ("alors finalement Sophie ne vient pas", "Marc devrait vraiment changer de
+   poste", "il n'est pas heureux là-bas", "je trouve ça curieux", "which surprised me"). What the
+   author thinks is the part no fact holds. Two things are NOT a stance, and neither opens the
+   gate. A remark about the CORRECTION itself ("en fait Léa ne travaille pas chez Globex, je me
+   suis trompé", "actually that's wrong, my mistake") says nothing about Léa, only that an earlier
+   belief was wrong. And a HEDGE on a fact ("Pierre déménage probablement à Lyon", "I think she's
+   in Berlin now") says how SURE the author is, which the fact carries in its evidence strength,
+   not what the author thinks OF it.
+ · A PLACE the author bothered to SITUATE, alone or not, achievement or not. By its name
+   ("j'étais seul à la Bibliothèque Forney hier", "j'ai passé l'après-midi au Jardin des Plantes",
+   "spent the afternoon at the Tate", "Cinémathèque hier") or by WHOSE it is ("chez la mère de
+   Léa", "at Tom's") → table, row 3. Bothering to say WHERE is the signal, a proper noun is only
+   one of the ways to do it.
+ · ANOTHER PERSON named, with the author or reported by them ("j'ai croisé Sophie au supermarché",
+   "Marc est venu à la réunion hier", "Nadia rigole") → table, row 3.
+ · SOMETHING ACHIEVED — a first, a record, a measurable result, an effort that succeeded ("j'ai
+   réussi à être debout avant 6h", "ran my first 10k") → table, row 3.
+ · A THING THE AUTHOR WAS WAITING ON HAS MOVED, said with WHEN ("le devis est parti ce matin",
+   "the quote went out this morning") → dated episode, table row 3. A chore the author simply did
+   is not one of these.
+ · The author's OWN TAKE ON A LINK THAT IS THE THING — an article, a video, a paper, a thread
+   ("great read on how memory consolidates", "super intéressant sur la mémoire", "à lire pour le
+   projet"). No summary of the page reproduces it → table, KEEP the note.
+
+CLOSES THE GATE — read this list ONLY if nothing above matched. Then atomic_note = null when the
+capture is:
+ · a statement whose whole content is an attribute of someone or something, "X has / is / does Y"
+   ("Marie has a cat Gipsy", "my mother has a new cat", "Pierre travaille chez Acme"). The
+   attribute still becomes a fact; it is the NOTE that is not owed.
+ · a link with NO words left once the URL is stripped, mechanically; or one whose remaining words
+   belong on the card of a thing that already has its own identity, a place, a shop, a tool, a
+   company ("le restaurant Chez Léon, très bon", "the Linear board, that's where we track
+   everything") — they will be found again there. The URL is recorded by the other pass either
+   way and never competes with the note: a commented link yields BOTH.
  · progress on a project ("I made progress on X today, tested Y")
- · a status with NO moment attached ("I've already eaten", "that's sent", "c'est fait") →
-   nothing was lived, no note. ANCHOR IT TO A MOMENT AND IT FLIPS: "le devis est parti ce
-   matin", "the quote went out this morning" say WHEN something happened, so they leave a
-   dated episode — go to the table. This line judges STATUSES only,
-   never what the author did with their day: a chore or an ordinary session ("j'ai acheté du
-   pain ce matin", "went for a run this morning") is caught by its own line below and stays
-   noteless, moment or no moment.
- · a SOLITARY ROUTINE ACTIVITY already done — nobody else, no named place, nothing achieved.
-   The three conditions hold TOGETHER, and the middle one is the one that gets forgotten: a place
-   the author bothered to NAME ("j'ai passé l'après-midi au Jardin des Plantes", "spent the
-   afternoon at the Tate") breaks this line on its own, alone or not → table, row 3.
-   A chore ("I bought bread", "I did the dishes") or an ordinary session ("went for a run this
-   morning, felt good") → no note, and NOT is_ephemeral: it is done, not pending
- · a habit or a biographical trait with no situated moment ("I played piano as a child", "I used to
-   run every morning") → durable knowledge, no note
-SVO fail-safe: if the capture rephrases fully as (subject, predicate, object) triples, it is a fact,
-not a note. A note always carries a move that no triple holds.
+ · a status ("I've already eaten", "that's sent", "c'est fait"): nothing was lived.
+ · a SOLITARY ROUTINE ACTIVITY already done — a chore or an ordinary session ("j'ai acheté du pain
+   ce matin", "I did the dishes", "j'ai lavé la voiture hier", "went for a run this morning, felt
+   good") → no note, and NOT is_ephemeral: it is done, not pending. Moment or no moment.
+ · a habit or a biographical trait, situated in time or not ("I played piano as a child", "I used
+   to run every morning", "je fais du yoga le jeudi depuis deux ans", "j'ai commencé la poterie il
+   y a trois ans") → durable knowledge, no note. A habit is durable and PERISHABLE: a fact that
+   may lapse, never an episode, and saying WHEN it started does not make one.
+ · fully rephrasable as (subject, predicate, object) triples with nothing left over. A note always
+   carries a move that no triple holds — and if it did, the first list caught it already.
 
 ROUTING TABLE — past the gate, read top to bottom, take the FIRST row that matches, stop there. The
 order IS the rule: it settles every conflict, so never weigh two rows against each other.
