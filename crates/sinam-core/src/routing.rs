@@ -520,6 +520,53 @@ impl Brain {
                 crate::decay::resolve_now(Some(&ctx.now_sql)),
             )?;
 
+            // Une capture qui n'a RIEN laissé part en file « À valider ».
+            //
+            // La confiance ne pouvait pas porter ça. Elle n'est lue que dans le
+            // bloc ci-dessus, gardé par `!atomic.trim().is_empty()` : quand la
+            // note est nulle il n'existe aucune ligne où écrire un statut, donc
+            // un modèle qui doutait à 0,2 d'un abandon était jeté aussi
+            // silencieusement qu'un modèle sûr de lui. Et le prompt a raison de
+            // rendre 1,0 : il note sa confiance dans le ROUTAGE, et le routage
+            // d'une corvée solitaire est évident. C'est l'ABANDON qui doit être
+            // relu, pas le raisonnement qui y mène.
+            //
+            // Rien à demander au modèle : ce qu'une capture a laissé se compte.
+            // Une fiche SANS fait, sans note et sans lien ne compte pas — un nom
+            // seul n'apprend rien. Le contenu brut est gardé tel quel : c'est ce
+            // que l'utilisateur a écrit, et c'est la seule chose qui reste.
+            let laisse_une_trace = created_note_id.is_some()
+                || !report.new_facts.is_empty()
+                || !seen_projects.is_empty()
+                || is_ephemeral
+                || !arr(classified.get("relations")).is_empty()
+                || !arr(classified.get("resources")).is_empty()
+                || report.negations.applied > 0
+                || report.negations.proposed > 0;
+            if !laisse_une_trace && !content.trim().is_empty() {
+                let language = classified
+                    .get("language")
+                    .and_then(Value::as_str)
+                    .filter(|s| !s.is_empty());
+                let note_id = persist_atomic_note(
+                    &conn,
+                    content.trim(),
+                    "",
+                    &[],
+                    capture_id,
+                    "note",
+                    None,
+                    false,
+                    "pending",
+                    Some("rien_garde"),
+                    None,
+                    language,
+                )?;
+                report.created_note_id = Some(note_id);
+                // Pas de vecteur : tant qu'elle est en attente, cette ligne ne
+                // doit pas remonter dans une recherche comme un souvenir acquis.
+            }
+
             mark(&conn, capture_id, &ctx.now, "processed")?;
             Ok(())
         })();
@@ -3553,6 +3600,124 @@ mod tests {
             .route_capture(&json!({"id": "c2", "content": "x"}), &c, &ctx)
             .unwrap();
         assert_eq!(compte(&brain, "SELECT COUNT(*) FROM resources"), 1);
+    }
+
+    // ── Une capture qui n'a rien laissé ─────────────────────────────────
+
+    /// Comme `router_entite`, mais le CONTENU brut compte ici : c'est lui qu'on
+    /// retrouve en file quand la capture n'a rien laissé d'autre.
+    fn router_contenu(contenu: &str, classified: Value) -> Brain {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.keep().join("s.db");
+        let brain = Brain::open(db.to_str().unwrap(), None).unwrap();
+        {
+            let conn = brain.storage.lock().unwrap();
+            conn.execute("INSERT INTO inbox (id, content) VALUES ('c1', ?1)", [contenu])
+                .unwrap();
+        }
+        let ctx = RouteContext {
+            now: "2026-07-13T12:00:00".into(),
+            today: "2026-07-13".into(),
+            intentions_cutoff: "2026-07-11T12:00:00".into(),
+            now_sql: "2026-07-13 12:00:00".into(),
+        };
+        brain
+            .route_capture(&json!({"id": "c1", "content": contenu}), &classified, &ctx)
+            .unwrap();
+        brain
+    }
+
+    /// Le squelette d'un abandon : le modèle a tout mis à null et il est sûr.
+    fn abandon() -> Value {
+        json!({
+            "language": "fr",
+            "atomic_note": null,
+            "atomic_note_kind": null,
+            "event_date": null,
+            "is_ephemeral": false,
+            "entities": [],
+            "relations": [],
+            "project_entries": [],
+            "obsoleted_facts": [],
+            "resources": [],
+            "classification_confidence": 1.0
+        })
+    }
+
+    #[test]
+    fn une_capture_qui_ne_laisse_rien_atteint_la_file() {
+        // Arbitré : « J'ai lavé la voiture hier » ne doit RIEN garder, mais on
+        // doit demander. Le modèle rend 1,0 et il a raison — le routage est
+        // évident. C'est l'abandon qu'on relit, et il ne se lit pas dans la
+        // confiance : sans note, aucune ligne n'existait où écrire un statut.
+        let brain = router_contenu("J'ai lavé la voiture hier", abandon());
+        assert_eq!(
+            compte(&brain, "SELECT COUNT(*) FROM atomic_notes \
+                            WHERE review_status = 'pending' AND review_reason = 'rien_garde'"),
+            1
+        );
+        // Le contenu brut, tel qu'écrit : c'est tout ce qui reste de la capture.
+        let conn = brain.storage.lock().unwrap();
+        let contenu: String = conn
+            .query_row("SELECT content FROM atomic_notes", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(contenu, "J'ai lavé la voiture hier");
+    }
+
+    #[test]
+    fn une_fiche_vide_nest_pas_une_trace() {
+        // « Léa : … » fabriquait une fiche Léa sans le moindre fait et perdait
+        // tout le reste. Un nom seul n'apprend rien : la capture part en file.
+        let mut c = abandon();
+        c["entities"] = json!([{
+            "canonical_name": "Léa", "type": "person", "aliases": [], "facts": []
+        }]);
+        let brain = router_contenu("Léa : changer les serrures", c);
+        assert_eq!(
+            compte(&brain, "SELECT COUNT(*) FROM atomic_notes \
+                            WHERE review_reason = 'rien_garde'"),
+            1
+        );
+    }
+
+    #[test]
+    fn le_rien_garde_ne_restreint_rien() {
+        // Quatre captures qui ont laissé quelque chose. Aucune ne doit être
+        // remise en question : une file noyée se clique sans se lire.
+        let mut avec_note = abandon();
+        avec_note["atomic_note"] = json!("Penser à rappeler le notaire");
+        avec_note["atomic_note_kind"] = json!("task");
+
+        let mut avec_fait = abandon();
+        avec_fait["entities"] = json!([{
+            "canonical_name": "Pierre", "type": "person", "aliases": [],
+            "facts": [{"predicate": "works_at", "value": "Acme",
+                       "persistence_value": 4, "evidence_strength": "explicit",
+                       "category": "work"}]
+        }]);
+
+        let mut avec_projet = abandon();
+        avec_projet["project_entries"] =
+            json!([{"project_canonical": "rénovation", "content": "posé les rails",
+                    "is_new": true}]);
+
+        let mut avec_lien = abandon();
+        avec_lien["resources"] = json!([{"url": "https://example.org/a", "title": "a"}]);
+
+        for (nom, c) in [
+            ("note", avec_note),
+            ("fait", avec_fait),
+            ("projet", avec_projet),
+            ("lien", avec_lien),
+        ] {
+            let brain = router_contenu("peu importe", c);
+            assert_eq!(
+                compte(&brain, "SELECT COUNT(*) FROM atomic_notes \
+                                WHERE review_reason = 'rien_garde'"),
+                0,
+                "une capture qui a laissé un {nom} n'a rien à faire en file"
+            );
+        }
     }
 
     // ── Entité proposée plutôt que créée ────────────────────────────────
