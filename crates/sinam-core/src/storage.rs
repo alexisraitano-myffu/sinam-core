@@ -607,8 +607,10 @@ mod tests {
         // Sept depuis que `resource` est semé : une ressource est une entité
         // comme un projet, et son type est connu du produit — le faire passer
         // par la file des propositions demanderait « créer un type resource ? »
-        // au premier lien capturé.
-        assert_eq!(types, 7);
+        // au premier lien capturé. Huit depuis le huitième type semé, et le
+        // compte était resté à sept : une assertion en retard sur le code ne
+        // protège plus rien, elle échoue juste à chaque passe.
+        assert_eq!(types, 8);
         let resource: i64 = conn
             .query_row(
                 "SELECT count(*) FROM active_entity_types WHERE type = 'resource'",

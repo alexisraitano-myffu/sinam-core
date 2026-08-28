@@ -325,7 +325,7 @@ impl Brain {
 
         // Resolve (step 2) outside the transaction, like Python.
         let resolved = if truthy(classified.get("entities")) {
-            Some(self.resolve(&conn, classified, ctx))
+            Some(self.resolve(&conn, classified, ctx, content))
         } else {
             None
         };
@@ -443,7 +443,13 @@ impl Brain {
                         .get("event_date")
                         .and_then(Value::as_str)
                         .filter(|s| !s.is_empty())
-                        .map(|s| resolve_date(s, &ctx.today))
+                        // SYN-213 — la résolution d'abord, puis l'invariant :
+                        // une date issue d'un jour NOMMÉ tombe sur ce jour.
+                        .map(|s| {
+                            let iso = resolve_date(s, &ctx.today);
+                            let iso = snap_bare_day_month(&iso, content, &ctx.today);
+                            snap_to_named_weekday(&iso, content, &ctx.today)
+                        })
                         .as_deref(),
                     recurring,
                     review_status,
@@ -850,7 +856,15 @@ impl Brain {
 
     // ── step 2 — resolve ────────────────────────────────────────────────
 
-    fn resolve(&self, conn: &Connection, classified: &Value, ctx: &RouteContext) -> Vec<Resolved> {
+    fn resolve(
+        &self,
+        conn: &Connection,
+        classified: &Value,
+        ctx: &RouteContext,
+        // SYN-213 — le texte de la capture, pour vérifier qu'une date issue
+        // d'un jour NOMMÉ tombe bien sur ce jour.
+        capture: &str,
+    ) -> Vec<Resolved> {
         let mut out = Vec::new();
         for entity_data in arr(classified.get("entities")) {
             let aliases: Vec<String> = arr(entity_data.get("aliases"))
@@ -871,7 +885,8 @@ impl Brain {
                 let lowered = predicate.to_lowercase();
                 if DATE_PREDICATE_KEYWORDS.iter().any(|kw| lowered.contains(kw)) {
                     if let Some(v) = fact.get("value").and_then(Value::as_str) {
-                        let resolved = resolve_fact_date(v, predicate, &ctx.today);
+                        let resolved =
+                            resolve_fact_date(v, predicate, &ctx.today, capture);
                         if let Value::Object(m) = &mut fact {
                             m.insert("value".into(), Value::String(resolved));
                         }
@@ -2829,8 +2844,21 @@ fn parse_month_name_date(value: &str) -> Option<(u32, u32, Option<i64>)> {
 /// someone's birth year states something plainly false on their fiche.
 /// Rolling an anniversary forward is `digest::next_occurrence`'s job and it
 /// reads month and day only, so moving the year back costs no notification.
-fn resolve_fact_date(value: &str, predicate: &str, today: &str) -> String {
-    let resolved = resolve_date(value, today);
+fn resolve_fact_date(value: &str, predicate: &str, today: &str, capture: &str) -> String {
+    let iso = resolve_date(value, today);
+    // La fenêtre de douze mois ne s'applique PAS à une naissance ni à un
+    // anniversaire : l'année d'une date de naissance ne se déduit d'aucun
+    // calendrier, et la ramener dans la fenêtre l'écraserait. Le recalage
+    // d'année propre à ces prédicats est écrit plus bas, il suffit.
+    let iso = if PAST_ONLY_PREDICATE_KEYWORDS
+        .iter()
+        .any(|kw| predicate.to_lowercase().contains(kw))
+    {
+        iso
+    } else {
+        snap_bare_day_month(&iso, capture, today)
+    };
+    let resolved = snap_to_named_weekday(&iso, capture, today);
     let p = predicate.to_lowercase();
     if !PAST_ONLY_PREDICATE_KEYWORDS.iter().any(|kw| p.contains(kw)) {
         return resolved;
@@ -2867,6 +2895,170 @@ fn month_len(y: i64, m: i64) -> i64 {
     }
 }
 
+/// Weekday names the classifier realistically sees in a capture, FR and EN,
+/// accented or not, full or abbreviated. Index = ISO weekday − 1 (Monday = 0).
+const WEEKDAY_NAMES: [&[&str]; 7] = [
+    &["lundi", "monday", "lun", "mon"],
+    &["mardi", "tuesday", "mar", "tue", "tues"],
+    &["mercredi", "wednesday", "mer", "wed"],
+    &["jeudi", "thursday", "jeu", "thu", "thur", "thurs"],
+    &["vendredi", "friday", "ven", "fri"],
+    &["samedi", "saturday", "sam", "sat"],
+    &["dimanche", "sunday", "dim", "sun"],
+];
+
+/// ISO weekday of a `YYYY-MM-DD` string, Monday = 0. Sakamoto, no deps, to
+/// stay in the style of the arithmetic already in this file.
+fn weekday_index(date: &str) -> Option<usize> {
+    if date.len() < 10 {
+        return None;
+    }
+    let y: i64 = date[0..4].parse().ok()?;
+    let m: i64 = date[5..7].parse().ok()?;
+    let d: i64 = date[8..10].parse().ok()?;
+    if !(1..=12).contains(&m) || d < 1 || d > month_len(y, m) {
+        return None;
+    }
+    const OFF: [i64; 12] = [0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4];
+    let yy = if m < 3 { y - 1 } else { y };
+    // Sakamoto yields Sunday = 0; shift so that Monday = 0.
+    let sunday0 = (yy + yy / 4 - yy / 100 + yy / 400 + OFF[(m - 1) as usize] + d) % 7;
+    Some(((sunday0 + 6) % 7) as usize)
+}
+
+/// The single weekday NAMED in a capture, if there is exactly one.
+///
+/// Exactly one is the condition. "on s'est vus mardi puis jeudi" names two and
+/// nothing here can tell which one the date belongs to, so we keep quiet
+/// rather than guess.
+fn named_weekday(text: &str) -> Option<usize> {
+    let lower = text.to_lowercase();
+    let mut found: Option<usize> = None;
+    for (i, names) in WEEKDAY_NAMES.iter().enumerate() {
+        // Whole word only: "mar" must not match inside "marché", "sun" inside
+        // "sunny", "dim" inside "dimanche" (which the same loop matches whole).
+        let hit = names.iter().any(|n| {
+            lower.match_indices(*n).any(|(at, _)| {
+                let before = lower[..at].chars().next_back();
+                let after = lower[at + n.len()..].chars().next();
+                !before.is_some_and(char::is_alphanumeric)
+                    && !after.is_some_and(char::is_alphanumeric)
+            })
+        });
+        if hit {
+            if found.is_some() && found != Some(i) {
+                return None;
+            }
+            found = Some(i);
+        }
+    }
+    found
+}
+
+/// Does the capture write a YEAR anywhere? If it does, the model had one to
+/// read and we keep our hands off.
+fn states_a_year(text: &str) -> bool {
+    let b = text.as_bytes();
+    (0..b.len().saturating_sub(3)).any(|i| {
+        if !b[i..i + 4].iter().all(u8::is_ascii_digit) {
+            return false;
+        }
+        if i > 0 && (b[i - 1] as char).is_ascii_digit() {
+            return false;
+        }
+        if i + 4 < b.len() && (b[i + 4] as char).is_ascii_digit() {
+            return false;
+        }
+        let y: i64 = text[i..i + 4].parse().unwrap_or(0);
+        (1900..=2100).contains(&y)
+    })
+}
+
+/// A BARE day-and-month resolves within twelve months of today.
+///
+/// SYN-204. "on s'est mariés le 12 juin" carries no year, so the only years
+/// the capture can mean are the most recent 12 June already gone and the next
+/// one to come. A resolution thirteen months back is wrong whatever the tense,
+/// and the model produced exactly that.
+///
+/// The DIRECTION is left to the model, because the direction belongs to the
+/// tense and deciding it here would decide in the rule's place: a date it put
+/// in the past stays in the past, one it put ahead stays ahead. Only the YEAR
+/// moves, and only when the capture states none. Nothing is restricted: a date
+/// already inside the window, or one whose capture writes a year, comes back
+/// untouched.
+fn snap_bare_day_month(date: &str, capture: &str, today: &str) -> String {
+    if date.len() < 10 || today.len() < 10 || states_a_year(capture) {
+        return date.to_string();
+    }
+    let head = &date[0..10];
+    let (Ok(m), Ok(d)) = (head[5..7].parse::<i64>(), head[8..10].parse::<i64>()) else {
+        return date.to_string();
+    };
+    let Ok(ty) = today[0..4].parse::<i64>() else {
+        return date.to_string();
+    };
+    // The two candidates the capture can mean, and nothing else: the most
+    // recent occurrence already gone, and the next one to come.
+    let this_year = format!("{ty:04}-{m:02}-{d:02}");
+    let gone = if this_year.as_str() > today { ty - 1 } else { ty };
+    let want = if head < today { gone } else { gone + 1 };
+    if head[0..4].parse::<i64>() == Ok(want) {
+        return date.to_string();
+    }
+    // 29 February only exists on a leap year: re-anchoring it would produce a
+    // date chrono refuses to parse, which costs the notification outright.
+    if d > month_len(want, m) {
+        return date.to_string();
+    }
+    format!("{want:04}-{m:02}-{d:02}{}", &date[10..])
+}
+
+/// A date resolved from a NAMED weekday must FALL on that weekday.
+///
+/// SYN-204 / SYN-213. This is the one date invariant that needs no arbitration:
+/// whatever the tense, whatever the direction, "jeudi" is a Thursday. When the
+/// model writes a date that bears another day's name it is wrong on its own
+/// terms, and we snap it to the nearest date carrying the named day, keeping
+/// the DIRECTION the model chose relative to today. Its reading of past versus
+/// future is left alone: that reading belongs to the tense, and overriding it
+/// here would decide in the rule's place.
+///
+/// It NEVER fires on a date that is already right, so it restricts nothing. It
+/// stays silent when the capture names no weekday, or names two.
+///
+/// The same check runs on the corpus side (`scripts/parity/etiqueter.py`), on
+/// the labelling model, which makes the same mistake in the same direction.
+fn snap_to_named_weekday(date: &str, capture: &str, today: &str) -> String {
+    if date.len() < 10 {
+        return date.to_string();
+    }
+    let head = &date[0..10];
+    let Some(want) = named_weekday(capture) else {
+        return date.to_string();
+    };
+    let Some(got) = weekday_index(head) else {
+        return date.to_string();
+    };
+    if got == want {
+        return date.to_string();
+    }
+    // The NEAREST date bearing the name, at most three days away. Moving
+    // further would rewrite the model's reading of the date rather than fix
+    // the day it names.
+    let forward = ((want + 7 - got) % 7) as i64;
+    let delta = if forward <= 3 { forward } else { forward - 7 };
+    let mut snapped = add_days_iso(head, delta);
+    // ...but never across today. The model's reading of past versus future
+    // belongs to the tense, and a snap of one or two days must not flip it:
+    // a Friday it placed before today stays before today.
+    if (head < today) != (snapped.as_str() < today) {
+        snapped = add_days_iso(head, if delta > 0 { delta - 7 } else { delta + 7 });
+    }
+    // Keep any time suffix the model wrote after the date.
+    format!("{snapped}{}", &date[10..])
+}
+
 /// Day arithmetic on an ISO `YYYY-MM-DD` string (Gregorian, no deps).
 fn add_days_iso(date: &str, days: i64) -> String {
     let (mut y, mut m, mut d) = (
@@ -2897,6 +3089,139 @@ fn add_days_iso(date: &str, days: i64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+
+    // ── SYN-204 : une date nue jour+mois tient dans douze mois ─────────────
+
+    #[test]
+    fn a_written_year_is_left_alone() {
+        assert!(states_a_year("on s'est mariés le 12 juin 2019"));
+        assert!(states_a_year("born in 1990"));
+        assert!(!states_a_year("on s'est mariés le 12 juin"));
+        // Un nombre qui n'est pas une année n'en est pas une.
+        assert!(!states_a_year("budget 150000 euros"));
+        assert!(!states_a_year("on en a dépensé 87k"));
+    }
+
+    #[test]
+    fn bare_day_month_comes_back_inside_the_window() {
+        let today = "2026-07-13";
+        // Le défaut mesuré : le 12 juin déjà passé de cette année, pas celui
+        // de l'année d'avant.
+        assert_eq!(
+            snap_bare_day_month("2025-06-12", "on s'est mariés le 12 juin", today),
+            "2026-06-12"
+        );
+        // Vers l'avant, la direction du modèle est respectée.
+        assert_eq!(
+            snap_bare_day_month("2027-08-03", "le forum est le 3 août", today),
+            "2026-08-03"
+        );
+    }
+
+    #[test]
+    fn bare_day_month_restricts_nothing() {
+        let today = "2026-07-13";
+        // Déjà dans la fenêtre : intacte, des deux côtés.
+        assert_eq!(
+            snap_bare_day_month("2026-06-12", "le 12 juin", today),
+            "2026-06-12"
+        );
+        assert_eq!(
+            snap_bare_day_month("2026-08-03", "le 3 août", today),
+            "2026-08-03"
+        );
+        // Une année ÉCRITE dans la capture : on n'y touche pas, même loin.
+        assert_eq!(
+            snap_bare_day_month("2019-06-12", "on s'est mariés le 12 juin 2019", today),
+            "2019-06-12"
+        );
+        // Une naissance porte son année et échappe donc à la fenêtre.
+        assert_eq!(
+            snap_bare_day_month("1990-03-03", "né le 3 mars 1990", today),
+            "1990-03-03"
+        );
+        // Le 29 février ne se réancre pas sur une année non bissextile.
+        assert_eq!(
+            snap_bare_day_month("2024-02-29", "le 29 février", today),
+            "2024-02-29"
+        );
+        // L'heure écrite après la date survit.
+        assert_eq!(
+            snap_bare_day_month("2025-06-12T18:00", "le 12 juin", today),
+            "2026-06-12T18:00"
+        );
+    }
+
+    // ── SYN-213 : une date issue d'un jour NOMMÉ tombe sur ce jour ──────────
+
+    #[test]
+    fn weekday_index_reads_the_calendar() {
+        // 13 juillet 2026 est un lundi, le temps de référence du harnais.
+        assert_eq!(weekday_index("2026-07-13"), Some(0));
+        assert_eq!(weekday_index("2026-07-09"), Some(3)); // jeudi
+        assert_eq!(weekday_index("2026-07-10"), Some(4)); // vendredi
+        assert_eq!(weekday_index("2026-03-01"), Some(6)); // dimanche, mois < 3
+        assert_eq!(weekday_index("2024-02-29"), Some(3)); // bissextile
+        assert_eq!(weekday_index("2026-02-30"), None); // n'existe pas
+        assert_eq!(weekday_index("2026-07"), None);
+    }
+
+    #[test]
+    fn named_weekday_needs_exactly_one_and_a_whole_word() {
+        assert_eq!(named_weekday("On a mangé des pâtes jeudi soir"), Some(3));
+        assert_eq!(named_weekday("Design review on Friday"), Some(4));
+        // Deux jours nommés : rien ne dit auquel la date appartient.
+        assert_eq!(named_weekday("on s'est vus mardi puis jeudi"), None);
+        // Le même jour deux fois reste un seul jour.
+        assert_eq!(named_weekday("jeudi, oui jeudi"), Some(3));
+        // Pas de faux positif à l'intérieur d'un mot.
+        assert_eq!(named_weekday("je suis allé au marché"), None);
+        assert_eq!(named_weekday("it was a sunny morning"), None);
+        assert_eq!(named_weekday("rien de temporel ici"), None);
+    }
+
+    #[test]
+    fn snap_fixes_the_day_and_keeps_the_direction() {
+        let today = "2026-07-13"; // lundi
+        // Le défaut mesuré : « jeudi » au passé sortait au 10, un vendredi.
+        assert_eq!(
+            snap_to_named_weekday("2026-07-10", "On a mangé des pâtes jeudi soir", today),
+            "2026-07-09"
+        );
+        // Vers l'avant, la direction du modèle est respectée.
+        assert_eq!(
+            snap_to_named_weekday("2026-07-17", "On mange des pâtes jeudi soir", today),
+            "2026-07-16"
+        );
+        // L'heure écrite après la date survit.
+        assert_eq!(
+            snap_to_named_weekday("2026-07-10T20:00", "des pâtes jeudi soir", today),
+            "2026-07-09T20:00"
+        );
+    }
+
+    #[test]
+    fn snap_restricts_nothing() {
+        let today = "2026-07-13";
+        // Déjà juste : intacte.
+        assert_eq!(
+            snap_to_named_weekday("2026-07-09", "on a mangé jeudi", today),
+            "2026-07-09"
+        );
+        // Aucun jour nommé : intacte, même si la date est loin.
+        assert_eq!(
+            snap_to_named_weekday("2026-06-12", "on s'est mariés le 12 juin", today),
+            "2026-06-12"
+        );
+        // Deux jours nommés : intacte, on ne devine pas.
+        assert_eq!(
+            snap_to_named_weekday("2026-07-10", "vus mardi puis jeudi", today),
+            "2026-07-10"
+        );
+        // Date inexploitable : intacte.
+        assert_eq!(snap_to_named_weekday("jeudi", "jeudi", today), "jeudi");
+    }
 
     // ── SYN-190 ────────────────────────────────────────────────────────────
 
@@ -3015,16 +3340,16 @@ mod tests {
     #[test]
     fn a_birth_date_is_never_in_the_future() {
         let today = "2026-08-20";
-        assert_eq!(resolve_fact_date("2027-07-23", "has_birthday", today), "2026-07-23");
+        assert_eq!(resolve_fact_date("2027-07-23", "has_birthday", today, "son anniversaire est le 23 juillet"), "2026-07-23");
         // Still ahead after re-anchoring to this year → the year before.
-        assert_eq!(resolve_fact_date("2027-12-25", "birthday", today), "2025-12-25");
+        assert_eq!(resolve_fact_date("2027-12-25", "birthday", today, "son anniversaire est le 25 décembre"), "2025-12-25");
         // A real birth year is a claim, not an anchor: it stays.
-        assert_eq!(resolve_fact_date("1990-03-03", "has_birthday", today), "1990-03-03");
+        assert_eq!(resolve_fact_date("1990-03-03", "has_birthday", today, "né le 3 mars 1990"), "1990-03-03");
         // 29 February survives only on a leap year — moving it would make the
         // date unparseable, which costs the notification outright.
-        assert_eq!(resolve_fact_date("2028-02-29", "has_birthday", today), "2028-02-29");
+        assert_eq!(resolve_fact_date("2028-02-29", "has_birthday", today, "son anniversaire est le 29 février"), "2028-02-29");
         // A deadline or a next appointment is legitimately ahead of us.
-        assert_eq!(resolve_fact_date("2027-07-23", "next_meeting_date", today), "2027-07-23");
+        assert_eq!(resolve_fact_date("2027-07-23", "next_meeting_date", today, "prochaine réunion le 23 juillet 2027"), "2027-07-23");
     }
 
     #[test]
