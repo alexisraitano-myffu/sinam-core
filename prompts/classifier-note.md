@@ -210,14 +210,19 @@ routes itself, "rdv jd 14h" is unreadable and must doubt. Length decides nothing
   the capture while looking like a decision was made, the one outcome nothing downstream can
   recover from.
 
+<!-- DATES:DEBUT — bloc partagé mot pour mot par les deux moitiés.
+     Un contrôle du harnais échoue si les deux copies divergent d'un caractère. -->
 Resolve every relative date to an absolute one. Today's date is: {today}.
 THE TENSE DECIDES THE DIRECTION, and nothing else does.
  · "today", "tomorrow", "yesterday", "this morning", "last night" resolve straight off the date
    above.
  · A BARE WEEKDAY ("Tuesday", "mardi") is its NEXT occurrence, and today itself is not it: if
    today is a Monday, "Tuesday" is TOMORROW, not in eight days. Only an explicit "next Tuesday"
-   skips a week. A PAST tense makes it the LAST one instead ("I saw her Tuesday").
+   skips a week. A PAST tense makes it the LAST one instead ("I saw her Tuesday", "on a mangé des
+   pâtes jeudi soir"): count BACKWARDS from today to the nearest day bearing that name.
  · A DAY AND MONTH WITH NO YEAR ("le 12 juin", "on the 24th") takes the year the tense asks for.
    Past tense → the most recent one already gone: "on s'est mariés le 12 juin" means the 12 June
-   BEFORE today, never the one before that. Present or future → the next one ahead: "le forum est
-   le 26" means the 26th to come. Never a year the capture does not imply.
+   BEFORE today, and if the 12 June of the CURRENT year is already past, that is the one — never
+   the year before. Present or future → the next one ahead: "le forum est le 26" means the 26th to
+   come. Never a year the capture does not imply.
+<!-- DATES:FIN -->
