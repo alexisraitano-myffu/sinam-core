@@ -17,7 +17,7 @@ use std::path::Path;
 use std::sync::{Mutex, MutexGuard, Once};
 use std::time::Duration;
 
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::embedder::{CoreError, EMBEDDING_DIM};
 use crate::schema;
@@ -344,6 +344,75 @@ impl Storage {
 
 /// Same-connection variant of the entity similarity scan, callable from
 /// routing code that already holds the storage connection (in-transaction).
+/// Une tâche vivante, et à quel point elle ressemble à ce qu'on cherche.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct TaskHit {
+    pub note_id: String,
+    pub content: String,
+    pub score: f64,
+}
+
+/// Les tâches vivantes les plus proches d'un texte, sur la connexion du
+/// périmètre appelant — la transaction de routage tient déjà le verrou, donc
+/// `Storage::search_notes` s'y bloquerait.
+///
+/// Les vecteurs des notes vivent dans une table virtuelle, pas dans une
+/// colonne : on ne peut pas les relire pour les scorer un par un comme on le
+/// fait pour les entités. On sur-tire donc largement en KNN puis on filtre en
+/// Rust, exactement comme `search_notes`. Le facteur est généreux à dessein :
+/// une mémoire pleine de notes et de peu de tâches sortirait autrement une
+/// liste où aucune tâche n'apparaît.
+pub(crate) fn search_live_tasks_on(
+    conn: &Connection,
+    query: &[u8],
+    limit: usize,
+    exclude_note_id: Option<&str>,
+) -> Result<Vec<TaskHit>, CoreError> {
+    check_dim(query)?;
+    let fetch: u32 = 256;
+    let mut stmt = conn.prepare(
+        "SELECT note_id, distance FROM atomic_notes_vec \
+         WHERE embedding MATCH ?1 AND k = ?2 ORDER BY distance",
+    )?;
+    let raw = stmt
+        .query_map(params![query, fetch], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, f64>(1)?))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let mut hits: Vec<TaskHit> = Vec::new();
+    let mut seen = HashSet::new();
+    for (key, distance) in raw {
+        let base = Storage::base_note_id(&key).to_string();
+        if Some(base.as_str()) == exclude_note_id || !seen.insert(base.clone()) {
+            continue;
+        }
+        // Une note en attente de validation n'est pas encore une tâche du
+        // backlog : l'archiver reviendrait à répondre à sa place.
+        let vivante: Option<String> = conn
+            .query_row(
+                "SELECT content FROM atomic_notes \
+                 WHERE id = ?1 AND kind = 'task' AND archived_at IS NULL \
+                 AND review_status <> 'pending'",
+                params![base],
+                |r| r.get(0),
+            )
+            .optional()?;
+        let Some(content) = vivante else { continue };
+        hits.push(TaskHit {
+            note_id: base,
+            content,
+            // Même convention que `EntityHit` : une distance cosinus dans
+            // [0, 2] se lit comme un score dans [0, 1].
+            score: (1.0 - distance / 2.0).clamp(0.0, 1.0),
+        });
+        if hits.len() == limit {
+            break;
+        }
+    }
+    Ok(hits)
+}
+
 pub(crate) fn search_entities_on(
     conn: &Connection,
     query: &[u8],
@@ -496,6 +565,56 @@ mod tests {
                 params![id, name, etype],
             )
             .unwrap();
+    }
+
+    /// Une note posée avec son vecteur, pour que la recherche ait de quoi
+    /// mordre. `theta` place le vecteur : plus il est proche de la requête,
+    /// plus le score monte.
+    fn insert_note(storage: &Storage, id: &str, kind: &str, statut: &str,
+                   archivee: bool, theta: f64) {
+        {
+            let conn = storage.lock().unwrap();
+            conn.execute(
+                "INSERT INTO atomic_notes (id, content, kind, review_status, archived_at) \
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![
+                    id,
+                    format!("contenu de {id}"),
+                    kind,
+                    statut,
+                    if archivee { Some("2026-07-01") } else { None }
+                ],
+            )
+            .unwrap();
+        }
+        storage.upsert_note_vectors(id, &[unit_vec(theta)]).unwrap();
+    }
+
+    // Annuler une action ne peut viser qu'une tâche VIVANTE : ni une note, ni
+    // une tâche archivée, ni une ligne qui attend encore d'être validée — on
+    // répondrait à la place de l'utilisateur.
+    #[test]
+    fn la_recherche_dannulation_ne_voit_que_les_taches_vivantes() {
+        let (_dir, storage) = open_temp();
+        insert_note(&storage, "vivante", "task", "confirmed", false, 0.0);
+        insert_note(&storage, "note", "note", "confirmed", false, 0.01);
+        insert_note(&storage, "archivee", "task", "confirmed", true, 0.02);
+        insert_note(&storage, "en-attente", "task", "pending", false, 0.03);
+
+        let conn = storage.lock().unwrap();
+        let hits = search_live_tasks_on(&conn, &unit_vec(0.0), 10, None).unwrap();
+        assert_eq!(
+            hits.iter().map(|h| h.note_id.as_str()).collect::<Vec<_>>(),
+            vec!["vivante"]
+        );
+        assert!(hits[0].score > 0.99, "un vecteur identique doit scorer haut");
+        assert_eq!(hits[0].content, "contenu de vivante");
+
+        // Et la note que la capture vient d'écrire s'exclut : sinon
+        // « je ne vais finalement pas appeler le dentiste » archiverait sa
+        // propre trace au lieu de la tâche visée.
+        let hits = search_live_tasks_on(&conn, &unit_vec(0.0), 10, Some("vivante")).unwrap();
+        assert!(hits.is_empty());
     }
 
     // SYN-118 — chunked storage: one vec0 row per window, search returns ONE

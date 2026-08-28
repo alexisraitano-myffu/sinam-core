@@ -28,7 +28,7 @@ use rusqlite::{params, params_from_iter, Connection};
 use serde_json::{json, Map, Value};
 
 use crate::embedder::{CoreError, Embedder};
-use crate::storage::{search_entities_on, Storage};
+use crate::storage::{search_entities_on, search_live_tasks_on, Storage, TaskHit};
 
 // Same tunables and defaults as cycle.py; the env overrides keep working
 // because host and core share the process environment.
@@ -37,6 +37,17 @@ const MERGE_EMBEDDING_THRESHOLD_DEFAULT: f64 = 0.85;
 const PROJECT_ATTACH_THRESHOLD_DEFAULT: f64 = 0.30;
 const PROJECT_ATTACH_MARGIN_DEFAULT: f64 = 0.03;
 const REVIEW_CONFIDENCE_THRESHOLD_DEFAULT: f64 = 0.7;
+
+/// Ce qu'il faut pour ARCHIVER une tâche qu'une capture annule, et l'avance
+/// qu'il faut sur la deuxième candidate.
+///
+/// Le seuil penche vers la file, à l'inverse de l'accroche d'un projet, et
+/// pour une raison mesurable et pas esthétique : une tâche archivée par erreur
+/// sort du backlog, et un backlog est une liste qu'on lit pour savoir ce qui
+/// reste — personne n'y cherche ce qui n'y est plus. La négation d'un fait
+/// peut se permettre d'agir parce que la fiche montre le trou.
+const TASK_CANCEL_THRESHOLD_DEFAULT: f64 = 0.62;
+const TASK_CANCEL_MARGIN_DEFAULT: f64 = 0.08;
 
 /// SYN-190 — how close two predicate NAMES must embed to be worth proposing.
 ///
@@ -189,6 +200,10 @@ pub struct RouteReport {
     pub project_syntheses: Vec<ProjectSynthesis>,
     pub fast_exit: bool,
     pub negations: NegationOutcome,
+    /// Tâches retirées du backlog parce qu'une capture les annulait.
+    pub cancelled_tasks: i64,
+    /// Annulations qu'on n'a pas su rattacher seul : une question attend.
+    pub cancellations_proposed: i64,
 }
 
 /// The routing brain: storage + (optionally) the embedder that powers the
@@ -520,6 +535,64 @@ impl Brain {
                 crate::decay::resolve_now(Some(&ctx.now_sql)),
             )?;
 
+            // Renoncer est une DÉCISION, et une décision se garde.
+            //
+            // Mesuré le 2026-08-28, trois fois sur trois et sur trois captures
+            // différentes : dès que `cancels_action` est rempli, le modèle
+            // cesse d'écrire la note. Il traite la capture comme réglée par le
+            // pointeur. Quatre formulations du prompt et deux emplacements
+            // n'y ont rien changé, et la dernière disait littéralement que ce
+            // champ ne décide de rien.
+            //
+            // Donc on ne le lui redemande pas : si une capture nomme ce
+            // qu'elle annule sans rien laisser d'autre, le contenu brut EST la
+            // note. `confirmed`, pas `pending` : c'est la CIBLE qui peut être
+            // douteuse, jamais le fait que l'auteur a renoncé.
+            let annulation = classified
+                .get("cancels_action")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|s| !s.is_empty());
+            if annulation.is_some() && created_note_id.is_none() && !content.trim().is_empty() {
+                let language = classified
+                    .get("language")
+                    .and_then(Value::as_str)
+                    .filter(|s| !s.is_empty());
+                let note_id = persist_atomic_note(
+                    &conn,
+                    content.trim(),
+                    "",
+                    &[],
+                    capture_id,
+                    "note",
+                    None,
+                    false,
+                    "confirmed",
+                    None,
+                    None,
+                    language,
+                )?;
+                created_note_id = Some(note_id.clone());
+                report.created_note_id = Some(note_id);
+            }
+
+            // Une action annulée retire la tâche déjà enregistrée.
+            //
+            // Après la note, pas avant : la décision de renoncer EST une note,
+            // et elle vient d'être écrite. On l'exclut de la recherche, sinon
+            // « je ne vais finalement pas appeler le dentiste » archiverait sa
+            // propre trace au lieu de la tâche de la semaine dernière.
+            if let Some(action) = annulation {
+                let (retirees, demandees) = self.cancel_matching_task(
+                    &conn,
+                    action,
+                    capture_id,
+                    created_note_id.as_deref(),
+                )?;
+                report.cancelled_tasks = retirees;
+                report.cancellations_proposed = demandees;
+            }
+
             // Une capture qui n'a RIEN laissé part en file « À valider ».
             //
             // La confiance ne pouvait pas porter ça. Elle n'est lue que dans le
@@ -542,7 +615,9 @@ impl Brain {
                 || !arr(classified.get("relations")).is_empty()
                 || !arr(classified.get("resources")).is_empty()
                 || report.negations.applied > 0
-                || report.negations.proposed > 0;
+                || report.negations.proposed > 0
+                || report.cancelled_tasks > 0
+                || report.cancellations_proposed > 0;
             if !laisse_une_trace && !content.trim().is_empty() {
                 let language = classified
                     .get("language")
@@ -590,6 +665,8 @@ impl Brain {
             "new_facts": report.new_facts,
             "created_note_id": report.created_note_id,
             "fast_exit": report.fast_exit,
+            "cancelled_tasks": report.cancelled_tasks,
+            "cancellations_proposed": report.cancellations_proposed,
             "negations": {
                 "applied": report.negations.applied,
                 "proposed": report.negations.proposed,
@@ -1673,6 +1750,90 @@ impl Brain {
         Ok(())
     }
 
+    /// Une capture annule une action : on retrouve la tâche visée, ou on
+    /// demande.
+    ///
+    /// Le symétrique de `negate_one`, côté note, avec une différence qui n'est
+    /// pas un détail : un fait se nie par un PRÉDICAT, une tâche par du texte
+    /// libre. « appeler le dentiste » et « prendre RDV chez le dentiste » sont
+    /// la même intention écrite deux fois, et aucune égalité de chaîne ne le
+    /// voit. C'est donc une recherche par proximité, avec deux garde-fous : un
+    /// score plancher, et une AVANCE sur la deuxième candidate. Deux tâches qui
+    /// se ressemblent, c'est exactement le cas où il ne faut pas choisir seul.
+    ///
+    /// Sans embarqueur, on ne devine pas : la note de la décision est écrite de
+    /// toute façon, donc rien n'est perdu, seul l'archivage n'a pas lieu.
+    fn cancel_matching_task(
+        &self,
+        conn: &Connection,
+        action: &str,
+        capture_id: &str,
+        exclude_note_id: Option<&str>,
+    ) -> Result<(i64, i64), CoreError> {
+        let action = action.trim();
+        if action.is_empty() {
+            return Ok((0, 0));
+        }
+        let Some(vec) = self.embed(action) else {
+            return Ok((0, 0));
+        };
+        let hits = search_live_tasks_on(conn, &vec, 4, exclude_note_id)?;
+        if hits.is_empty() {
+            // Rien à annuler : aucune tâche vivante ne ressemble à ça. Comme
+            // pour un fait jamais enregistré, le silence est la réponse — on
+            // ne fabrique pas une question sur une tâche qui n'existe pas.
+            return Ok((0, 0));
+        }
+        let threshold = env_f64("SYNAPSE_TASK_CANCEL_THRESHOLD", TASK_CANCEL_THRESHOLD_DEFAULT);
+        let margin = env_f64("SYNAPSE_TASK_CANCEL_MARGIN", TASK_CANCEL_MARGIN_DEFAULT);
+
+        match decide_cancellation(&hits, threshold, margin) {
+            CancelDecision::Ask { reason, candidates } => {
+                conn.execute(
+                    "INSERT INTO note_cancellation_proposals \
+                     (id, cancelled_action, reason, candidate_note_ids, evidence_capture_id) \
+                     VALUES (?1,?2,?3,?4,?5)",
+                    params![
+                        new_uuid(),
+                        action,
+                        reason,
+                        serde_json::to_string(&candidates).unwrap_or_else(|_| "[]".into()),
+                        capture_id
+                    ],
+                )?;
+                Ok((0, 1))
+            }
+            CancelDecision::Archive(note_id) => {
+                // Archivée, pas supprimée : `POST /atomic-note/{id}/unarchive`
+                // existe déjà, donc l'erreur se répare. C'est la condition qui
+                // rend l'action acceptable ici.
+                conn.execute(
+                    "UPDATE atomic_notes SET archived_at = CURRENT_TIMESTAMP, \
+                     updated_at = CURRENT_TIMESTAMP WHERE id = ?1",
+                    params![note_id],
+                )?;
+                // La même table sert de JOURNAL, avec `status = 'applied'`.
+                // Sans elle, une tâche disparaîtrait du backlog sans que rien
+                // ne dise pourquoi ni depuis quelle capture, et « annulée »
+                // ne se distinguerait plus de « perdue ».
+                conn.execute(
+                    "INSERT INTO note_cancellation_proposals \
+                     (id, cancelled_action, reason, candidate_note_ids, \
+                      evidence_capture_id, status, resolved_at, resolved_note_id) \
+                     VALUES (?1,?2,'certain',?3,?4,'applied',CURRENT_TIMESTAMP,?5)",
+                    params![
+                        new_uuid(),
+                        action,
+                        serde_json::to_string(&[&note_id]).unwrap_or_else(|_| "[]".into()),
+                        capture_id,
+                        note_id
+                    ],
+                )?;
+                Ok((1, 0))
+            }
+        }
+    }
+
     fn propose_project_attach_if_similar(
         &self,
         conn: &Connection,
@@ -1720,6 +1881,48 @@ impl Brain {
             params![new_uuid(), capture_id, note_id, m.id, content.trim(), m.score],
         )?;
         Ok(true)
+    }
+}
+
+/// Ce qu'on fait d'une annulation, une fois les candidates trouvées.
+#[derive(Debug, PartialEq)]
+enum CancelDecision {
+    /// Une seule candidate, assez proche et assez détachée des autres.
+    Archive(String),
+    /// Trop loin, ou deux candidates au coude à coude : on demande.
+    Ask { reason: &'static str, candidates: Vec<String> },
+}
+
+/// La règle, séparée de la base pour se mesurer sans embarqueur ni vecteurs.
+///
+/// Deux façons de ne pas être sûr, et elles n'ont pas le même motif. « Trop
+/// loin » veut dire qu'aucune tâche ne ressemble vraiment à ce qui est annulé.
+/// « Au coude à coude » veut dire que deux tâches y ressemblent autant, et
+/// c'est le cas où choisir seul est le plus coûteux.
+///
+/// `hits` arrive trié par score décroissant et n'est jamais vide.
+fn decide_cancellation(hits: &[TaskHit], threshold: f64, margin: f64) -> CancelDecision {
+    let trop_loin = hits[0].score < threshold;
+    let trop_serre = hits.len() > 1 && (hits[0].score - hits[1].score) < margin;
+    if !trop_loin && !trop_serre {
+        return CancelDecision::Archive(hits[0].note_id.clone());
+    }
+    // Les candidates montrées sont celles qui valent le coup d'œil. Le
+    // plancher est plus bas que le seuil d'action : la question n'engage
+    // rien, contrairement à l'archivage.
+    let candidates: Vec<String> = hits
+        .iter()
+        .filter(|h| h.score >= threshold * 0.75)
+        .map(|h| h.note_id.clone())
+        .collect();
+    let candidates = if candidates.is_empty() {
+        vec![hits[0].note_id.clone()]
+    } else {
+        candidates
+    };
+    CancelDecision::Ask {
+        reason: if trop_loin { "approximatif" } else { "ambigu" },
+        candidates,
     }
 }
 
@@ -3600,6 +3803,117 @@ mod tests {
             .route_capture(&json!({"id": "c2", "content": "x"}), &c, &ctx)
             .unwrap();
         assert_eq!(compte(&brain, "SELECT COUNT(*) FROM resources"), 1);
+    }
+
+    // ── Annuler une action retire la tâche déjà enregistrée ─────────────
+
+    fn hit(id: &str, score: f64) -> TaskHit {
+        TaskHit { note_id: id.into(), content: format!("tâche {id}"), score }
+    }
+
+    #[test]
+    fn une_cible_nette_est_archivee() {
+        // Assez proche, et largement détachée de la suivante.
+        assert_eq!(
+            decide_cancellation(&[hit("t1", 0.81), hit("t2", 0.40)], 0.62, 0.08),
+            CancelDecision::Archive("t1".into())
+        );
+        // Seule candidate : rien avec quoi la confondre.
+        assert_eq!(
+            decide_cancellation(&[hit("t1", 0.63)], 0.62, 0.08),
+            CancelDecision::Archive("t1".into())
+        );
+    }
+
+    #[test]
+    fn deux_taches_au_coude_a_coude_ne_se_tranchent_pas_seules() {
+        // Le cas qui coûte le plus cher : deux tâches se ressemblent autant.
+        // Archiver la mauvaise sort du backlog, et un backlog est une liste
+        // qu'on lit pour savoir ce qui RESTE — personne n'y cherche ce qui
+        // n'y est plus.
+        let d = decide_cancellation(&[hit("t1", 0.80), hit("t2", 0.76)], 0.62, 0.08);
+        assert_eq!(
+            d,
+            CancelDecision::Ask { reason: "ambigu", candidates: vec!["t1".into(), "t2".into()] }
+        );
+    }
+
+    #[test]
+    fn une_ressemblance_lointaine_se_demande_au_lieu_de_sappliquer() {
+        let d = decide_cancellation(&[hit("t1", 0.45), hit("t2", 0.20)], 0.62, 0.08);
+        // Le motif dit LAQUELLE des deux incertitudes : rien ne ressemble
+        // vraiment à ce qui est annulé.
+        assert_eq!(
+            d,
+            CancelDecision::Ask { reason: "approximatif", candidates: vec!["t1".into()] }
+        );
+        // Et la candidate montrée descend sous le seuil d'action : la question
+        // n'engage rien, contrairement à l'archivage.
+        let d = decide_cancellation(&[hit("t1", 0.10)], 0.62, 0.08);
+        assert_eq!(
+            d,
+            CancelDecision::Ask { reason: "approximatif", candidates: vec!["t1".into()] }
+        );
+    }
+
+    #[test]
+    fn renoncer_est_une_decision_et_la_decision_se_garde() {
+        // Le modèle laisse tomber la note dès qu'il remplit le pointeur :
+        // mesuré 3 fois sur 3, sur trois captures, avec quatre formulations du
+        // prompt. Le code la rétablit, et le contenu brut EST la décision.
+        let mut c = abandon();
+        c["cancels_action"] = json!("la réservation du gîte");
+        let capture = "euh non finalement laisse tomber la réservation du gîte on part plus";
+        let brain = router_contenu(capture, c);
+        let conn = brain.storage.lock().unwrap();
+        let (contenu, kind, statut): (String, String, String) = conn
+            .query_row(
+                "SELECT content, kind, review_status FROM atomic_notes",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(contenu, capture);
+        assert_eq!(kind, "note");
+        // `confirmed` : c'est la CIBLE qui peut être douteuse, jamais le fait
+        // que l'auteur a renoncé.
+        assert_eq!(statut, "confirmed");
+    }
+
+    #[test]
+    fn la_note_du_modele_gagne_quand_il_en_ecrit_une() {
+        // Le repêchage ne doit pas doubler la note quand le modèle a fait son
+        // travail : une capture, un souvenir.
+        let mut c = abandon();
+        c["atomic_note"] = json!("Finalement je n'envoie pas le devis à Acme");
+        c["atomic_note_kind"] = json!("note");
+        c["cancels_action"] = json!("envoyer le devis à Acme");
+        let brain = router_contenu("Finalement je n'envoie pas le devis à Acme", c);
+        assert_eq!(compte(&brain, "SELECT COUNT(*) FROM atomic_notes"), 1);
+        let conn = brain.storage.lock().unwrap();
+        let contenu: String = conn
+            .query_row("SELECT content FROM atomic_notes", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(contenu, "Finalement je n'envoie pas le devis à Acme");
+    }
+
+    #[test]
+    fn sans_embarqueur_on_ne_devine_pas() {
+        // Le cerveau des tests n'en a pas. La décision de renoncer est écrite
+        // comme d'habitude — rien n'est perdu — mais aucune tâche ne part et
+        // aucune question n'est posée sur une ressemblance qu'on n'a pas pu
+        // mesurer.
+        let mut c = abandon();
+        c["atomic_note"] = json!("Je ne vais finalement pas appeler le dentiste");
+        c["atomic_note_kind"] = json!("note");
+        c["cancels_action"] = json!("appeler le dentiste");
+        let brain = router_contenu("je ne vais finalement pas appeler le dentiste", c);
+        assert_eq!(compte(&brain, "SELECT COUNT(*) FROM note_cancellation_proposals"), 0);
+        assert_eq!(
+            compte(&brain, "SELECT COUNT(*) FROM atomic_notes WHERE archived_at IS NOT NULL"),
+            0
+        );
+        assert_eq!(compte(&brain, "SELECT COUNT(*) FROM atomic_notes"), 1);
     }
 
     // ── Une capture qui n'a rien laissé ─────────────────────────────────

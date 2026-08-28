@@ -257,6 +257,26 @@ pub(crate) fn init_schema(conn: &Connection) -> Result<(), rusqlite::Error> {
             resolved_at         TIMESTAMP,
             created_entity_id   TEXT REFERENCES entities(id)
         )",
+        // ── Annulation d'une action déjà enregistrée ────────────────────────
+        // Le symétrique de `fact_negation_proposals`, côté note. Une tâche ne
+        // pend à aucune fiche, donc la table sœur ne peut pas la porter : sa
+        // colonne `entity_id` est NOT NULL et référence `entities`.
+        //
+        // Et le seuil penche ici dans l'AUTRE sens. La négation d'un fait se
+        // voit : la fiche montre le trou. Une tâche archivée par erreur, elle,
+        // disparaît d'un backlog où personne ne la cherchera plus. Donc au
+        // moindre doute la question est posée, jamais tranchée.
+        "CREATE TABLE IF NOT EXISTS note_cancellation_proposals (
+            id                  TEXT PRIMARY KEY,
+            cancelled_action    TEXT NOT NULL,
+            reason              TEXT NOT NULL,
+            candidate_note_ids  TEXT NOT NULL DEFAULT '[]',
+            evidence_capture_id TEXT REFERENCES inbox(id),
+            status              TEXT NOT NULL DEFAULT 'pending',
+            created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            resolved_at         TIMESTAMP,
+            resolved_note_id    TEXT
+        )",
         // ── SYN-58 — Live entity-type vocabulary + proposals ────────────────
         "CREATE TABLE IF NOT EXISTS active_entity_types (
             type        TEXT PRIMARY KEY,

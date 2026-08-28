@@ -89,6 +89,10 @@ fn synced_tables() -> &'static [(&'static str, &'static str)] {
         // revenir. Répliquée comme ses sœurs, donc, et l'entité créée à
         // l'acceptation se réplique ensuite par la table `entities`.
         ("entity_creation_proposals", "id"),
+        // Une action annulée qu'on n'a pas su rattacher seule attend un
+        // arbitrage, comme la négation d'un fait, et cet arbitrage doit valoir
+        // sur tous les appareils : le backlog est le même partout.
+        ("note_cancellation_proposals", "id"),
         ("project_attach_proposals", "id"),
         ("sync_owner", "id"),
         ("space", "id"),

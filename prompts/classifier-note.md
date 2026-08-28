@@ -18,6 +18,7 @@ Return ONLY valid JSON (no markdown):
   "is_ephemeral": false,
   "ephemeral_content": "string or null — the reminder text when is_ephemeral is true, in the capture's language, in the user's own words. It NEVER replaces atomic_note: fill both",
   "summary": "string or null — one sentence describing atomic_note, in its language. NULL whenever atomic_note is null",
+  "cancels_action": "string or null — the action the capture CALLS OFF, in the capture's own words. See below",
   "classification_confidence": 1.0
 }
 
@@ -236,3 +237,19 @@ THE TENSE DECIDES THE DIRECTION, and nothing else does.
    the year before. Present or future → the next one ahead: "le forum est le 26" means the 26th to
    come. Never a year the capture does not imply.
 <!-- DATES:FIN -->
+
+cancels_action rule:
+DECIDE THE NOTE FIRST, by the gate and the table. This field is written ON TOP of a routing
+already settled and never changes it, IN EITHER DIRECTION: it neither creates a note nor removes
+one, and it is the only field in this prompt that decides nothing at all.
+
+It names the action a capture CALLS OFF, in the capture's own words ("je ne vais finalement pas
+appeler le dentiste" → "appeler le dentiste"; "laisse tomber la réservation du gîte" → "la
+réservation du gîte"; "actually, I'm not sending the quote" → "sending the quote"). The ACTION,
+never the refusal: "envoyer le devis", not "ne pas envoyer le devis".
+
+Four things do NOT fill it: a self-correction taken back in the same breath ("appeler le client
+euh non oublie"); something DONE ("c'est fait"); a correction of a FACT ("en fait Léa ne travaille
+pas chez Globex"); a POSTPONEMENT ("finalement je l'appelle demain plutôt"), where the task lives
+and only its date moves. Null when in doubt: what goes here can retire a task the author no longer
+sees.
