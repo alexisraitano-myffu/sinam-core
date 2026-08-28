@@ -123,10 +123,15 @@ order IS the rule: it settles every conflict, so never weigh two rows against ea
     · a NAME IN FRONT of the actions ("Léa : changer les serrures, appeler l'électricien") does
       the same as reported speech: it says WHOSE they are → atomic_note_owner = that name.
     Falls through, and only here:
-    · an action CANCELLED ("I'm finally not calling the dentist") → row 4
+    · an action CANCELLED → row 4. Announcing one is NOT a task to do, however active the verb
+      looks ("j'annule la réunion de demain", "I'm cancelling tomorrow's meeting", "I'm finally
+      not calling the dentist"): the cancelling IS the capture, `cancels_action` carries it, and
+      writing "cancel the meeting" as a task would put in the backlog the very thing being
+      removed from it.
     · a trivial micro-errand — and ONLY the purchase of an ordinary CONSUMABLE or a household
       chore, STILL TO DO, in the infinitive or the imperative ("buy bread", "buy milk", "take the
-      bins out"), with no name, no date and nothing owed to anyone
+      bins out"), or stated as a NEED rather than an action ("ma voiture a besoin d'un lavage",
+      "the bins need taking out"), with no name, no date and nothing owed to anyone
       → atomic_note = null AND is_ephemeral = true, together.
       DURABLE EQUIPMENT IS NOT A CONSUMABLE. "buy a harness", "buy a desk", "buy running shoes"
       involve a choice and a price: they are TASKS with a note, not errands that expire.
