@@ -133,19 +133,18 @@ order IS the rule: it settles every conflict, so never weigh two rows against ea
       not calling the dentist"): the cancelling IS the capture, `cancels_action` carries it, and
       writing "cancel the meeting" as a task would put in the backlog the very thing being
       removed from it.
-    · a trivial micro-errand — and ONLY the purchase of an ordinary CONSUMABLE or a household
-      chore, STILL TO DO, in the infinitive or the imperative ("buy bread", "buy milk", "take the
-      bins out"), or stated as a NEED rather than an action ("ma voiture a besoin d'un lavage",
-      "the bins need taking out"), with no name, no date and nothing owed to anyone
-      → NO memory AND is_ephemeral = true, together.
-      DURABLE EQUIPMENT IS NOT A CONSUMABLE. "buy a harness", "buy a desk", "buy running shoes"
-      involve a choice and a price: they are TASKS with a note, not errands that expire.
-      In the PAST it is done, not pending ("I bought bread this morning") → no memory and
-      is_ephemeral = FALSE; marking it true would resurrect it as a reminder to do what is done.
-      Anything SENT, PAID, FILED, DECLARED, or ADDRESSED to a person or an organization is a
-      COMMITMENT and stays a task, however short the phrasing and whatever the name looks like —
-      lowercase, unfamiliar, an acronym you do not recognise ("send the quote to the accountant",
-      "pay the rent", "file the claim").
+    · a trivial micro-errand. FOUR conditions, ALL required, and the list is CLOSED:
+      (a) an ordinary CONSUMABLE bought, or a household chore. Durable equipment involves a choice
+          and a price: "buy a harness", "buy a desk", "buy running shoes" are TASKS with a note.
+      (b) STILL TO DO — infinitive, imperative, or stated as a NEED ("buy bread", "take the bins
+          out", "ma voiture a besoin d'un lavage").
+      (c) nothing SENT, PAID, FILED, DECLARED or ADDRESSED to a person or an organization. That is
+          a COMMITMENT and stays a task, however short the phrasing and whatever the name looks
+          like — lowercase, unfamiliar, an acronym you do not recognise ("pay the rent").
+      (d) no name, no date, nothing owed to anyone.
+      All four → NO memory AND is_ephemeral = true, together.
+      A PAST errand fails (b): it is done, not pending ("I bought bread this morning") → no memory
+      and is_ephemeral = FALSE. Marking it true would resurrect a reminder to do what is done.
 
  2. EVENT — kind="event". A dated occurrence the author ATTENDS, or that recurs.
     · "Vivatech on the 24th", "I have Pierre's party on the 20th", "dentist appointment Tuesday"
@@ -205,11 +204,6 @@ order IS the rule: it settles every conflict, so never weigh two rows against ea
 A CAPTURE RICH IN PEOPLE, PLACES AND FACTS IS THE CASE WHERE THE NOTE MATTERS MOST, NOT LEAST.
 Another pass extracts all of that. It cannot take the note away from you, and you must never
 withhold the note because the capture "is really about" the people it names.
- · "It's Nadia's birthday on July 23; Nadia is Karim's daughter and Tom's sister" → the event note.
- · "Meeting with Léna on 12 September about the Acme contract, she's just been promoted" → the
-   event note.
- · "Marie told me she had to call the dentist" → the task note, naming Marie.
- · "I went climbing with Alexis today and got my 6b+" → the episode note.
 
 is_ephemeral — an independent flag, decided AFTER the table:
 DEFAULT false. Set it true ONLY when ALL FOUR hold at once:
