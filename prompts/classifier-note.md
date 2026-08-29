@@ -159,9 +159,12 @@ order IS the rule: it settles every conflict, so never weigh two rows against ea
     · BIRTHDAYS — three wordings, three answers, nothing to weigh:
         a CELEBRATION is named (party, drinks, dinner) → event note, event_recurring=true,
           classification_confidence 1.0
-        a BARE anniversary date ("12 June is Yanis's birthday") → STILL the event note,
-          event_recurring=true, classification_confidence < 0.6. NEVER drop the note: a fact
-          reaches no validation queue, and the question would be silently answered.
+        a BARE anniversary date ("12 June is Yanis's birthday"), or one MENTIONED as having
+          happened with no celebration word ("c'était l'anniv de Maxime", "it was Max's birthday")
+          → STILL the event note, event_recurring=true, classification_confidence < 0.6. NEVER
+          drop the note: a fact reaches no validation queue, and the question would be silently
+          answered. The day you were together is not necessarily the day of birth, and only a
+          confidence under the threshold sends that yearly repeat to be confirmed.
         a BIRTH is stated ("born on 3 March", "born in 1990") → no note; the other pass records it
     Falls through: already past → row 3.
 
