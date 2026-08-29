@@ -40,6 +40,12 @@ survives the gate, the second what it drops. Nothing in the second list can undo
 exception written inside the line it contradicts loses to that line, so no exception is written
 there any more.
 
+THE GATE JUDGES THE WHOLE CAPTURE, NEVER ITS FIRST CLAUSE. Read both lists against EVERY
+proposition the capture makes, not against the one it opens with. A chore, a status or a routine
+stated first decides nothing for what follows it: "replaced the AC filter today, next replacement
+due in October" carries a DATE in its second half, and that date opens the gate for the capture.
+What is already done leaves nothing; what comes after it keeps its memory.
+
 OPENS THE GATE — read this list FIRST. ONE match is enough: the capture goes to the table and
 KEEPS its note. Stop reading the gate.
  · A DATE. It makes the capture an occurrence → table, row 2, whichever way round it is phrased
