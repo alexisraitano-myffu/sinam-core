@@ -1,4 +1,4 @@
-//! SYN-21 — resource pipeline (T5 port of `dream_cycle/resources.py`): fetch
+//! Resource pipeline (T5 port of `dream_cycle/resources.py`): fetch
 //! a URL, extract readable text, summarise it with the LLM, store it
 //! (searchable via its embedded summary).
 //!
@@ -272,7 +272,7 @@ pub fn fetch_and_extract(url: &str, timeout: Duration) -> Option<PageText> {
 /// LLM summary of the extracted text (prompt = data `resource-summary.md`).
 /// Falls back to a truncated snippet without a config (offline) or on any
 /// LLM/prompt failure — a resource is always storable.
-/// SYN-160 — renvoie aussi ce que l'appel a consommé. L'écriture du compteur
+/// Renvoie aussi ce que l'appel a consommé. L'écriture du compteur
 /// n'a PAS lieu ici : le contrat de cette fonction est de ne tenir aucun verrou
 /// pendant le réseau et le LLM. L'appelant l'enregistre sur la connexion qu'il
 /// prend déjà pour l'INSERT.
@@ -292,7 +292,7 @@ fn summarize(
     let head: String = text.chars().take(8000).collect();
     let params_json = json!({
         "model": config.model,
-        // SYN-124 — 2-4 phrases demandées + marge de raisonnement, cf. summaries::resummarize.
+        // 2-4 phrases demandées + marge de raisonnement, cf. summaries::resummarize.
         "max_tokens": 1024,
         "system": system,
         "messages": [{"role": "user", "content": format!("Title: {title}\n\n{head}")}],
@@ -365,7 +365,7 @@ impl Brain {
             return Ok(None);
         };
         let (summary, used) = summarize(config, &page.title, &page.text);
-        // Multi-frame blob (SYN-118): a long summary embeds per window and the
+        // Multi-frame blob: a long summary embeds per window and the
         // resource scorer keeps the best frame.
         let embedding = self.embed_frames(&format!("{}\n{}", page.title, summary));
 

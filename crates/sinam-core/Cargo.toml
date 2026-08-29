@@ -25,9 +25,9 @@ sqlite-vec = { workspace = true }
 uuid = { workspace = true }
 # Blocking HTTP for the classifier call; rustls so Android needs no OpenSSL.
 ureq = { version = "2", default-features = false, features = ["tls", "json"] }
-# Naive UTC timestamp math for decay (SYN-19) — no clock/tz features needed.
+# Naive UTC timestamp math for decay — no clock/tz features needed.
 chrono = { version = "0.4", default-features = false, features = ["std"] }
-# SYN-128 pairing channel: authenticated ECDH (the QR secret is the
+# pairing channel: authenticated ECDH (the QR secret is the
 # authenticator) → HKDF → AEAD. Mature crates, one implementation for the
 # 3 platforms. `getrandom` backs ephemeral key + nonce generation.
 x25519-dalek = { version = "2", features = ["getrandom", "static_secrets"] }
@@ -36,7 +36,7 @@ hkdf = "0.12"
 sha2 = "0.10"
 getrandom = "0.2"
 base64ct = { version = "1", features = ["alloc"] }
-# SYN-137 Mac↔Mac pairing: PAKE on the 6-digit code (offline brute-force
+# Mac↔Mac pairing: PAKE on the 6-digit code (offline brute-force
 # impossible by construction) + HMAC key confirmation so the member can
 # count and cap online attempts.
 spake2 = "0.4"

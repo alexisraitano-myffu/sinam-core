@@ -1,4 +1,4 @@
-//! SYN-112 — one-shot migration of the legacy INTEGER AUTOINCREMENT ids
+//! One-shot migration of the legacy INTEGER AUTOINCREMENT ids
 //! (`inbox`, `atomic_notes`) to TEXT uuids, the prerequisite of P2P sync:
 //! auto-increment ids cannot give rows a cross-device identity.
 //!

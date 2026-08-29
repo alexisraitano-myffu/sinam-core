@@ -1,4 +1,4 @@
-//! SYN-112 (T3, phase 4) — convergence property tests for the P2P sync
+//! Convergence property tests for the P2P sync
 //! engine, through the PUBLIC surface only (Storage + the SQL gateway),
 //! i.e. exactly what the Python host and the transport layer see.
 //!

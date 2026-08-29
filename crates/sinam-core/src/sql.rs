@@ -1,4 +1,4 @@
-//! Generic SQL gateway (SYN-110 / T1).
+//! Generic SQL gateway.
 //!
 //! Rationale: two SQLite libraries in one process (the host's own binding +
 //! the core's bundled SQLite) do NOT isolate each other — POSIX advisory
@@ -117,7 +117,7 @@ impl SqlConnection {
     }
 
     /// Host-facing fact write on THIS connection — same dedup-reinforce +
-    /// SYN-37 supersede as the routing path (`routing::insert_fact`). Lives
+    /// Supersede as the routing path (`routing::insert_fact`). Lives
     /// on the gateway (not `Brain`) so the caller's open transaction
     /// (savepoint-based `with conn:` on the Python side) wraps the write:
     /// `Brain` runs on its own connection and would hit SQLITE_BUSY.
@@ -147,7 +147,7 @@ impl SqlConnection {
         )
     }
 
-    /// SYN-19 decay pass over atomic_notes (see `decay.rs`). `now_sql` =
+    /// Decay pass over atomic_notes (see `decay.rs`). `now_sql` =
     /// optional fixed clock 'YYYY-MM-DD HH:MM:SS' (tests); None = system now.
     pub fn apply_decay(
         &self,
@@ -158,7 +158,7 @@ impl SqlConnection {
         crate::decay::apply_decay(&conn, tau_days, crate::decay::resolve_now(now_sql))
     }
 
-    /// SYN-68 decay pass over entities (anchor `last_mentioned`).
+    /// Decay pass over entities (anchor `last_mentioned`).
     pub fn apply_entity_decay(
         &self,
         tau_days: Option<f64>,
@@ -195,7 +195,7 @@ impl SqlConnection {
         crate::routing::persist_project_entry(&conn, canonical, content, capture_id, is_new_project)
     }
 
-    /// SYN-23 — the digest's structured week (pure SQL on THIS connection,
+    /// The digest's structured week (pure SQL on THIS connection,
     /// offline-testable). `now_sql` = optional fixed clock (tests).
     pub fn gather_week(
         &self,
@@ -206,7 +206,7 @@ impl SqlConnection {
         crate::digest::gather_week(&conn, crate::decay::resolve_now(now_sql), days)
     }
 
-    /// SYN-132 — one-call read snapshot for an app replica fed by THIS local
+    /// One-call read snapshot for an app replica fed by THIS local
     /// core db instead of the desktop backend's HTTP endpoints. Same JSON
     /// shapes as `/changes`, `/feed`, `/projects`, `/project/{id}/state`,
     /// `/pending` and the proposal lists (see `snapshot.rs`).
@@ -228,7 +228,7 @@ impl SqlConnection {
         crate::snapshot::graph(&conn, include_notes, semantic)
     }
 
-    /// SYN-160 — what the LLM calls of `month` (`YYYY-MM`) consumed, split by
+    /// What the LLM calls of `month` (`YYYY-MM`) consumed, split by
     /// operation and model. TOKENS only, never a price: the tariff, who holds
     /// the key and who actually pays are host concerns, and a wrong figure is
     /// worse than no figure.
@@ -237,13 +237,13 @@ impl SqlConnection {
         crate::usage::usage_summary(&conn, month)
     }
 
-    /// SYN-132 — reverse provenance of one capture (`/capture/{id}/generated`).
+    /// Reverse provenance of one capture (`/capture/{id}/generated`).
     pub fn generated_for_capture(&self, capture_id: &str) -> Result<serde_json::Value, CoreError> {
         let conn = self.lock()?;
         crate::snapshot::generated_for_capture(&conn, capture_id)
     }
 
-    /// SYN-135 — apply one app action-log entry (validate/archive/rename/
+    /// Apply one app action-log entry (validate/archive/rename/
     /// relation CRUD/merge accept/…) to THIS local db, mirroring the desktop
     /// backend's write endpoints (see `actions.rs`). Wrapped in its own
     /// IMMEDIATE transaction: compound actions (merge reroute, promotion)

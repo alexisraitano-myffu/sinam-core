@@ -1,5 +1,5 @@
 """
-Generate reference vectors for the on-device parity test (T0, SYN-109).
+Generate reference vectors for the on-device parity test (T0).
 
 Reference = the Python backend's embedding semantics (fastembed + manual L2
 norm), i.e. what the production database vectors look like today. The Android

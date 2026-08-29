@@ -1,11 +1,11 @@
-//! Storage substrate (SYN-110 / T1): the core owns the SQLite schema and all
+//! Storage substrate: the core owns the SQLite schema and all
 //! vector reads/writes. Hosts keep querying non-vector columns through their
 //! own SQL connections; everything vectorial goes through [`Storage`].
 //!
 //! Parity contract with the Python implementation it replaces
 //! (`entity_search.py` + the inline vec0 SQL):
 //! - on-disk format unchanged: L2-normalized little-endian float32 blobs, in
-//!   the `atomic_notes_vec` vec0 table (note_id = note uuid, SYN-112) and in the
+//!   the `atomic_notes_vec` vec0 table (note_id = note uuid) and in the
 //!   `entities.embedding` / `resources.embedding` BLOB columns;
 //! - notes: native sqlite-vec KNN (`MATCH ? AND k = ?`, L2 distance);
 //! - entities/resources (UUID string PKs, no int rowid for vec0): exact linear
@@ -97,9 +97,9 @@ impl Storage {
         // Same rationale as sql.rs: apsw-era behavior is foreign_keys OFF.
         conn.pragma_update(None, "foreign_keys", false)?;
         schema::init_schema(&conn)?;
-        // SYN-112: legacy integer ids → uuid TEXT pks (no-op once done).
+        // legacy integer ids → uuid TEXT pks (no-op once done).
         crate::migrate::migrate_integer_ids(&conn)?;
-        // SYN-112 (T3): sync journal + triggers. After the uuid migration so
+        // Sync journal + triggers. After the uuid migration so
         // the journal only ever sees TEXT pks.
         crate::sync::install(&conn)?;
         Ok(Self {
@@ -107,7 +107,7 @@ impl Storage {
         })
     }
 
-    // ── P2P sync (SYN-112 T3) — engine surface, transport comes in phase 3 ──
+    // ── P2P sync — engine surface, transport comes in phase 3 ──
 
     pub fn sync_device_id(&self) -> Result<String, CoreError> {
         let conn = self.lock()?;
@@ -127,7 +127,7 @@ impl Storage {
         crate::sync::apply_changes(&conn, changes_json)
     }
 
-    /// SYN-133 — post-pull safety net: collapse derived twins (same capture
+    /// Post-pull safety net: collapse derived twins (same capture
     /// routed by two devices during a no-sync window) onto the smallest uuid,
     /// then sweep the doomed notes' vec0 rows (chunked keys included). The
     /// deletions journal as tombstones → the collapse replicates. Run it
@@ -158,7 +158,7 @@ impl Storage {
         self.upsert_note_vectors(note_id, std::slice::from_ref(&embedding.to_vec()))
     }
 
-    /// Store one vector per chunk for a note (SYN-118): chunk 0 keeps the
+    /// Store one vector per chunk for a note: chunk 0 keeps the
     /// note's uuid as its vec0 key (back-compat: point lookups and single-
     /// vector writers see no difference), later chunks are keyed `uuid#k`.
     /// Replaces atomically whatever chunk set the note had before.
@@ -238,7 +238,7 @@ impl Storage {
     pub fn search_notes(&self, query: &[u8], k: u32) -> Result<Vec<NoteHit>, CoreError> {
         check_dim(query)?;
         let conn = self.lock()?;
-        // A long note owns several chunk vectors (SYN-118): over-fetch, then
+        // A long note owns several chunk vectors: over-fetch, then
         // keep each note's BEST chunk so callers still see one hit per note.
         let fetch = (k as usize).saturating_mul(4).clamp(1, 4096) as u32;
         let mut stmt = conn.prepare(
@@ -485,7 +485,7 @@ fn check_dim(embedding: &[u8]) -> Result<(), CoreError> {
     Ok(())
 }
 
-/// SYN-118: a resource embedding BLOB may hold several concatenated
+/// A resource embedding BLOB may hold several concatenated
 /// `EMBEDDING_BYTES` frames (one per ~128-token chunk of the summary).
 fn check_dim_frames(embedding: &[u8]) -> Result<(), CoreError> {
     if embedding.is_empty() || embedding.len() % EMBEDDING_BYTES != 0 {
@@ -526,8 +526,8 @@ fn score_against(q: &[f64], blob: &[u8]) -> Option<f64> {
     Some((score * 10000.0).round() / 10000.0)
 }
 
-/// Best `score_against` over the frames of a (possibly multi-chunk) blob
-/// (SYN-118): a query only has to match ONE chunk of a long summary.
+/// Best `score_against` over the frames of a (possibly multi-chunk) blob:
+/// a query only has to match ONE chunk of a long summary.
 fn score_against_frames(q: &[f64], blob: &[u8]) -> Option<f64> {
     let frame = q.len() * 4;
     if frame == 0 || blob.is_empty() || blob.len() % frame != 0 {
@@ -617,7 +617,7 @@ mod tests {
         assert!(hits.is_empty());
     }
 
-    // SYN-118 — chunked storage: one vec0 row per window, search returns ONE
+    // chunked storage: one vec0 row per window, search returns ONE
     // hit per note (its best chunk), re-upsert clears stale chunk rows.
     #[test]
     fn chunked_notes_dedupe_to_best_chunk_and_replace_cleanly() {
@@ -683,7 +683,7 @@ mod tests {
         assert!(score_against_frames(&q, &blob[..10]).is_none());
     }
 
-    // SYN-118 — vec0 rejects INSERT OR REPLACE, so a re-embed of an EXISTING
+    // vec0 rejects INSERT OR REPLACE, so a re-embed of an EXISTING
     // note used to fail with a UNIQUE constraint error. Upsert must replace.
     #[test]
     fn upsert_note_vector_replaces_existing() {

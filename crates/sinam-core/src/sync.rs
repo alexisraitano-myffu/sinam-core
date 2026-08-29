@@ -1,7 +1,7 @@
-//! SYN-112 (T3) — the homemade P2P sync engine: change journal + hybrid
+//! The homemade P2P sync engine: change journal + hybrid
 //! logical clock + per-column LWW merge + tombstones, protocol versioned.
 //!
-//! Decision context (recorded on SYN-112): cr-sqlite is dormant and rejects
+//! Decision context, recorded at the time: cr-sqlite is dormant and rejects
 //! this schema, Automerge is the wrong model for 20 SQL tables, and the
 //! owner-lock (a single device runs the Dream Cycle) makes all derived
 //! tables single-writer — so the remaining engine is deliberately small.
@@ -75,13 +75,13 @@ fn synced_tables() -> &'static [(&'static str, &'static str)] {
         ("entity_merge_proposals", "id"),
         ("active_entity_types", "type"),
         ("entity_type_proposals", "id"),
-        // SYN-190 — répliquée comme ses trois sœurs : on tranche une proposition
+        // répliquée comme ses trois sœurs : on tranche une proposition
         // depuis n'importe quel device, et l'arbitrage doit suivre.
         ("predicate_merge_proposals", "id"),
-        // SYN-189 — même raison : une négation qu'on n'a pas su appliquer
+        // même raison : une négation qu'on n'a pas su appliquer
         // seule attend un arbitrage, et cet arbitrage doit valoir partout.
         ("fact_negation_proposals", "id"),
-        // SYN-188 — le nom canonique est ce que l'utilisateur LIT : la
+        // le nom canonique est ce que l'utilisateur LIT : la
         // proposition doit lui parvenir quel que soit l'appareil qui l'a vue.
         ("entity_rename_proposals", "id"),
         // Une entité proposée n'existe encore nulle part : la question doit
@@ -97,7 +97,7 @@ fn synced_tables() -> &'static [(&'static str, &'static str)] {
         ("sync_owner", "id"),
         ("space", "id"),
         ("devices", "device_id"),
-        // SYN-160 — append-only, uuid pk. Replicated so the total covers the
+        // append-only, uuid pk. Replicated so the total covers the
         // whole space; a row seen twice is the SAME row and upserts onto
         // itself, so nothing is counted twice. Two devices that really made
         // two calls keep two rows — they were really billed twice.
@@ -515,7 +515,7 @@ pub(crate) fn apply_changes(conn: &Connection, changes_json: &str) -> Result<Str
         }
         let n = tx.execute(&format!("DELETE FROM \"{tbl}\" WHERE \"{pkc}\" = ?1"), params![pk])?;
         if tbl == "atomic_notes" {
-            // Sweep every chunk key (`uuid` then `uuid#k`, SYN-118) — a
+            // Sweep every chunk key (`uuid` then `uuid#k`) — a
             // replicated delete must not leave orphan chunk vectors behind.
             tx.execute(
                 "DELETE FROM atomic_notes_vec WHERE note_id = ?1",
@@ -706,7 +706,7 @@ pub(crate) fn apply_changes(conn: &Connection, changes_json: &str) -> Result<Str
     .to_string())
 }
 
-// ── Dedup of double-routed derived rows (SYN-133, post-merge safety net) ────
+// ── Dedup of double-routed derived rows (post-merge safety net) ─────────────
 
 /// (table, guard column that must be non-null, natural-identity columns).
 /// Mirror of `api/sync_peers.py::_DEDUP_RULES` — keep both in step.
@@ -914,7 +914,7 @@ mod tests {
     }
 
     #[test]
-    // SYN-127 — the space singleton and the device registry travel the mesh
+    // the space singleton and the device registry travel the mesh
     // like any replicated table: a rename on one peer reaches the other.
     #[test]
     fn space_and_devices_replicate() {

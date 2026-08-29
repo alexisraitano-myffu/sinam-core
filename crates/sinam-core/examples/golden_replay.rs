@@ -1,4 +1,4 @@
-//! SYN-111 golden-parity runner: replay the frozen corpus through the Rust
+//! Golden-parity runner: replay the frozen corpus through the Rust
 //! routing into a fresh database. The Python side
 //! (`scripts/golden/golden_compare.py` in the backend repo) normalizes and
 //! diffs both databases.

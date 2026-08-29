@@ -1,4 +1,4 @@
-//! Deterministic Dream Cycle routing (SYN-111 / T2).
+//! Deterministic Dream Cycle routing.
 //!
 //! Faithful port of the Python brain's per-capture pipeline
 //! (`dream_cycle/cycle.py::_process_entry` and everything it fans out to:
@@ -61,7 +61,7 @@ const REVIEW_CONFIDENCE_THRESHOLD_DEFAULT: f64 = 0.7;
 const TASK_CANCEL_THRESHOLD_DEFAULT: f64 = 0.62;
 const TASK_CANCEL_MARGIN_DEFAULT: f64 = 0.08;
 
-/// SYN-190 — how close two predicate NAMES must embed to be worth proposing.
+/// How close two predicate NAMES must embed to be worth proposing.
 ///
 /// Measured 2026-08-24 on the real vocabulary, and the number is NOT the story:
 /// the two distributions overlap completely, so no threshold separates them.
@@ -177,7 +177,7 @@ pub struct ProjectSynthesis {
     pub entry_count: i64,
 }
 
-/// SYN-189 — what the capture's negations actually did.
+/// What the capture's negations actually did.
 ///
 /// Kept on the report rather than left implicit because the failure this
 /// feature exists to avoid is a SILENT one: a capture saying something is no
@@ -209,7 +209,7 @@ pub struct RouteReport {
     /// step5 accumulates across the run.
     pub new_facts: Vec<Value>,
     pub created_note_id: Option<String>,
-    /// SYN-207 — tous les souvenirs écrits, le premier restant sous
+    /// Tous les souvenirs écrits, le premier restant sous
     /// `created_note_id` pour tout ce qui n'en attendait qu'un.
     pub created_note_ids: Vec<String>,
     pub project_syntheses: Vec<ProjectSynthesis>,
@@ -255,7 +255,7 @@ impl Brain {
         Some(vec.iter().flat_map(|x| x.to_le_bytes()).collect())
     }
 
-    /// One serialized vector per ~128-token window (SYN-118): the storage
+    /// One serialized vector per ~128-token window: the storage
     /// keeps them all and search takes the best window per note.
     pub(crate) fn embed_chunks(&self, text: &str) -> Option<Vec<Vec<u8>>> {
         let chunks = self.embedder.as_ref()?.embed_chunks(text).ok()?;
@@ -267,7 +267,7 @@ impl Brain {
         )
     }
 
-    /// Chunk vectors concatenated into ONE blob (SYN-118) — the layout of the
+    /// Chunk vectors concatenated into ONE blob — the layout of the
     /// `entities`/`resources` embedding columns; scorers take the best frame.
     pub(crate) fn embed_frames(&self, text: &str) -> Option<Vec<u8>> {
         Some(self.embed_chunks(text)?.concat())
@@ -285,7 +285,7 @@ impl Brain {
         }
     }
 
-    /// Chunked variant (SYN-118) for the same re-embed path: one vector per
+    /// Chunked variant for the same re-embed path: one vector per
     /// ~128-token window, so a mobile host stores the same per-chunk rows as
     /// the desktop backend after a sync apply.
     pub fn embed_text_chunks(&self, text: &str) -> Result<Vec<Vec<f32>>, CoreError> {
@@ -307,7 +307,7 @@ impl Brain {
         classified: &Value,
         ctx: &RouteContext,
     ) -> Result<RouteReport, CoreError> {
-        // uuid string post-SYN-112; legacy integer ids (golden corpus,
+        // uuid string post-migration; legacy integer ids (golden corpus,
         // pre-migration callers) are accepted as their text form.
         let capture_id: String = match entry.get("id") {
             Some(Value::String(s)) if !s.is_empty() => s.clone(),
@@ -320,7 +320,7 @@ impl Brain {
         let mut report = RouteReport::default();
 
         let is_ephemeral = truthy(classified.get("is_ephemeral"));
-        // SYN-207 — une capture peut laisser PLUSIEURS souvenirs. Ce qui suit
+        // une capture peut laisser PLUSIEURS souvenirs. Ce qui suit
         // ne lit plus les champs au singulier mais la liste, qui les englobe :
         // sans `memories`, elle contient exactement le souvenir d'avant.
         let souvenirs = souvenirs(classified);
@@ -392,7 +392,7 @@ impl Brain {
                     self.step4_route(&conn, classified, resolved, capture_id, ancre_une_fiche, ctx)?;
             }
 
-            // SYN-189 — OUTSIDE the `resolved` guard on purpose. A capture whose
+            // OUTSIDE the `resolved` guard on purpose. A capture whose
             // whole point is a negation ("Pierre ne travaille plus chez Acme")
             // may teach nothing new and come back with `entities: []`, which
             // leaves `resolved` at None. Nesting this inside would make the pure
@@ -400,7 +400,7 @@ impl Brain {
             // never runs on.
             report.negations = self.apply_negations(&conn, classified, capture_id)?;
 
-            // Atomic note (SYN-56/58/85 gates), une par souvenir (SYN-207).
+            // Atomic note (gates), une par souvenir.
             let mut created_note_id: Option<String> = None;
             for souvenir in &souvenirs {
                 if is_ephemeral && !(souvenir.kind == "task" || souvenir.kind == "event") {
@@ -428,7 +428,7 @@ impl Brain {
                     "SYNAPSE_REVIEW_CONFIDENCE_THRESHOLD",
                     REVIEW_CONFIDENCE_THRESHOLD_DEFAULT,
                 );
-                // SYN-182 — « À valider » covers every kind now, with a named
+                // « À valider » covers every kind now, with a named
                 // reason. The queue was built on 2026-06-29 so a doubtful TASK
                 // would never be thrown away; the `episode` kind was born in
                 // 2026-08 and was never added to the gate, so a model hesitating
@@ -458,14 +458,14 @@ impl Brain {
                     } else {
                         ("confirmed", None)
                     };
-                // SYN-182 — reported speech gives the action to someone else. The
-                // prompt has promised "never as the author's own" since SYN-85 with
+                // reported speech gives the action to someone else. The
+                // prompt has promised "never as the author's own" for a long time, with
                 // nothing behind it: the column did not exist, so the note landed in
                 // the author's backlog anyway. NULL means the author, which is also
                 // every row written before today.
                 let owner = souvenir.owner.as_deref();
                 let summary = souvenir.summary.as_str();
-                // SYN-119 — the classifier detects the capture language server-side.
+                // the classifier detects the capture language server-side.
                 let language = classified
                     .get("language")
                     .and_then(Value::as_str)
@@ -483,12 +483,12 @@ impl Brain {
                     souvenir
                         .event_date
                         .as_deref()
-                        // SYN-213 — la résolution d'abord, puis l'invariant :
+                        // la résolution d'abord, puis l'invariant :
                         // une date issue d'un jour NOMMÉ tombe sur ce jour.
                         .map(|s| {
                             let iso = resolve_date(s, &ctx.today);
                             let iso = snap_bare_day_month(&iso, content, &ctx.today);
-                            // SYN-220 — le mois avant le jour de semaine : le
+                            // le mois avant le jour de semaine : le
                             // recalage de jour travaille à ±3 jours et
                             // franchirait le mois qu'on vient de choisir.
                             let iso = snap_bare_day(&iso, content, &ctx.today, &note_kind);
@@ -557,7 +557,7 @@ impl Brain {
 
             handle_intentions(&conn, classified, ctx)?;
 
-            // SYN-19: a new mention reactivates the notes referencing it.
+            // a new mention reactivates the notes referencing it.
             let mentioned: Vec<String> = arr(classified.get("entities"))
                 .iter()
                 .filter_map(|e| e.get("canonical_name").and_then(Value::as_str))
@@ -719,7 +719,7 @@ impl Brain {
     }
 
     /// Host-facing `insert_fact` (validation endpoints, reclassify) — same
-    /// dedup-reinforce + SYN-37 supersede as the routing path.
+    /// dedup-reinforce + supersede as the routing path.
     #[allow(clippy::too_many_arguments)]
     pub fn insert_user_fact(
         &self,
@@ -978,7 +978,7 @@ impl Brain {
                 .and_then(Value::as_str)
                 .unwrap_or("unknown");
             let row = find_existing_entity(&conn, entity_name, &[])?;
-            // Post-SYN-112 payloads carry uuid strings; a pre-migration
+            // Post-migration payloads carry uuid strings; a pre-migration
             // number is kept verbatim (same dangling-ref policy as migrate).
             let prov_id: Option<String> = match pf.get("source_inbox_id") {
                 Some(Value::Number(n)) => Some(n.to_string()),
@@ -1021,7 +1021,7 @@ impl Brain {
         conn: &Connection,
         classified: &Value,
         ctx: &RouteContext,
-        // SYN-213 — le texte de la capture, pour vérifier qu'une date issue
+        // le texte de la capture, pour vérifier qu'une date issue
         // d'un jour NOMMÉ tombe bien sur ce jour.
         capture: &str,
     ) -> Vec<Resolved> {
@@ -1045,7 +1045,7 @@ impl Brain {
                 let lowered = predicate.to_lowercase();
                 if DATE_PREDICATE_KEYWORDS.iter().any(|kw| lowered.contains(kw)) {
                     if let Some(v) = fact.get("value").and_then(Value::as_str) {
-                        // SYN-220 — le kind vient de la moitié NOTE, lisible ici
+                        // le kind vient de la moitié NOTE, lisible ici
                         // parce que les deux moitiés sont déjà fusionnées. Il
                         // dit de quel côté d'aujourd'hui un jour nu se range.
                         let note_kind = classified
@@ -1147,7 +1147,7 @@ impl Brain {
                 .map(|e| e.get("mention_count").and_then(Value::as_i64).unwrap_or(1) + 1)
                 .unwrap_or(1);
 
-            // SYN-58 type guards — new entities only.
+            // type guards — new entities only.
             let mut type_proposal: Option<(String, Option<String>)> = None;
             let mut entity_status = "active";
             if existing.is_none() {
@@ -1323,7 +1323,7 @@ impl Brain {
                         source_inbox_id,
                     )?;
                 }
-                // SYN-188 — un renommage déclaré en capture PROPOSE, il
+                // un renommage déclaré en capture PROPOSE, il
                 // n'applique pas. Réservé aux entités DÉJÀ connues : sur une
                 // entité que cette capture vient de créer, il n'y a rien à
                 // renommer, elle porte déjà le nom qu'on lui a donné.
@@ -1398,17 +1398,17 @@ impl Brain {
         // quelque chose doit déjà exister pour la recevoir.
         record_resources(conn, classified, source_inbox_id)?;
 
-        // SYN-190 — après TOUTES les écritures, jamais pendant.
+        // après TOUTES les écritures, jamais pendant.
         self.propose_predicate_merges(conn, classified, source_inbox_id)?;
 
         Ok(entity_ids)
     }
 
-    // ── SYN-189 — fact negation ─────────────────────────────────────────
+    // ── fact negation ───────────────────────────────────────────────────
 
     /// Apply what the capture says has STOPPED being true.
     ///
-    /// A negation is the SYN-37 supersede without a successor: the same
+    /// A negation is the supersede without a successor: the same
     /// machinery, minus the new value. It never deletes. `obsoleted_at` is set
     /// and `obsoleted_by` stays NULL — nothing replaced the fact, it simply
     /// ceased — and `POST /fact/{id}/restore` puts it back. That reversibility
@@ -1471,7 +1471,7 @@ impl Brain {
             Some(id) => id,
             // Nothing was ever recorded about this entity, so nothing about it
             // can have stopped being true. A negation NEVER creates a node, and
-            // never writes a "negative fact" (SYN-189): silence is the answer.
+            // never writes a "negative fact": silence is the answer.
             None => return Ok(NegationVerdict::Nothing),
         };
 
@@ -1498,7 +1498,7 @@ impl Brain {
         // The CLAIM, not the word. Negating `works_at` has to reach `employer`
         // too — exactly the reach a new value would have had through supersede.
         // Outside a family the predicate is taken literally, which is the
-        // residual SYN-190 leaves behind and the reason it blocked this ticket.
+        // residual predicate reconciliation leaves behind, and the reason it blocked.
         let family: Vec<String> = match single_valued_family(predicate) {
             Some(f) => f.iter().map(|p| (*p).to_string()).collect(),
             None => vec![predicate.trim().to_lowercase()],
@@ -1510,7 +1510,7 @@ impl Brain {
             .collect();
 
         if on_predicate.is_empty() {
-            // SYN-190's signature, reused as a LAST resort: `worked_at` against
+            // The predicate signature, reused as a LAST resort: `worked_at` against
             // `works_at` outside any family. Close enough to be worth showing,
             // never close enough to act on — that is the same measurement that
             // stops the predicate pass from merging on its own authority.
@@ -1573,7 +1573,7 @@ impl Brain {
         Ok(NegationVerdict::Applied(targets.len() as i64))
     }
 
-    // ── SYN-190 — predicate reconciliation ──────────────────────────────
+    // ── predicate reconciliation ────────────────────────────────────────
 
     /// The comparable form of a predicate: empty affixes stripped, verbs cut back
     /// to a stem, words sorted. `is_cousin_of` and `cousin_of` collapse onto the
@@ -1641,7 +1641,7 @@ impl Brain {
     /// SQLITE_BUSY trap.
     ///
     /// It only ever PROPOSES. Accepting a merge toward a single-valued family head
-    /// (`works_as` → `works_at`) triggers the SYN-37 supersede and obsoletes the
+    /// (`works_as` → `works_at`) triggers the supersede and obsoletes the
     /// previous fact: doing that unattended would delete knowledge in silence.
     fn propose_predicate_merges(
         &self,
@@ -1813,7 +1813,7 @@ impl Brain {
             }
         }
 
-        // SYN-61 embedding fallback.
+        // embedding fallback.
         let threshold = env_f64(
             "SYNAPSE_MERGE_EMBEDDING_THRESHOLD",
             MERGE_EMBEDDING_THRESHOLD_DEFAULT,
@@ -2012,7 +2012,7 @@ fn decide_cancellation(hits: &[TaskHit], threshold: f64, margin: f64) -> CancelD
 
 /// Un souvenir que la capture laisse : le texte, sa nature, et ce qui pend à lui.
 ///
-/// SYN-207. Le schéma n'en portait qu'UN, et le prompt le disait en toutes
+/// Le schéma n'en portait qu'UN, et le prompt le disait en toutes
 /// lettres, alors qu'une capture réelle en porte souvent deux de natures
 /// différentes. Mesuré sur quatre captures le 2026-08-28 : ce qui gagne est
 /// toujours le souvenir DATÉ et actionnable, ce qui tombe est celui qui n'a ni
@@ -2260,8 +2260,8 @@ pub(crate) fn query_row_maps(
 
 /// Port of `_find_existing_entity`: primary SQL-cased lookup, then the
 /// Python-cased alias scan (first DB-row match wins).
-/// pub(crate): `actions.rs` (SYN-135) resolves validated pending facts
-/// alias-aware, exactly like `dream_cycle/validation.py` (SYN-87).
+/// pub(crate): `actions.rs` resolves validated pending facts
+/// alias-aware, exactly like `dream_cycle/validation.py`.
 pub(crate) fn find_existing_entity(
     conn: &Connection,
     canonical_name: &str,
@@ -2403,7 +2403,7 @@ fn upsert_entity(
     }
 }
 
-/// SYN-188 — park a rename declared by a capture.
+/// Park a rename declared by a capture.
 ///
 /// Idempotent on (entity, proposed name) while pending: the same capture
 /// replayed, or the rename declared twice before anyone confirms, must not
@@ -2493,7 +2493,7 @@ fn record_resources(
 /// Une URL est une IDENTITÉ, pas une affirmation sur la chose : « ceci est
 /// l'adresse de Linear » ne se périme pas, ne se contredit pas et n'a rien à
 /// faire dans une file de validation de faits. Et le vocabulaire des prédicats
-/// est gouverné (SYN-190) : y ajouter `url` ouvrirait une famille entière pour
+/// est gouverné : y ajouter `url` ouvrirait une famille entière pour
 /// une donnée qui n'en est pas une.
 fn poser_le_lien_sur_la_fiche(
     conn: &Connection,
@@ -2682,7 +2682,7 @@ fn record_rename_proposal(
     Ok(())
 }
 
-/// SYN-189 — park a negation whose target is not certain.
+/// Park a negation whose target is not certain.
 ///
 /// Idempotent on (entity, predicate, value) while pending: the same capture
 /// replayed, or the same claim denied twice before anyone arbitrates, must not
@@ -2790,7 +2790,7 @@ fn record_merge_proposal(
     Ok(true)
 }
 
-/// Port of `facts_store.insert_fact` (dedup-reinforce + SYN-37 supersede).
+/// Port of `facts_store.insert_fact` (dedup-reinforce + supersede).
 /// pub(crate): the SQL gateway re-exposes it on the HOST's connection
 /// (`SqlConnection::insert_fact`) so user-action endpoints keep their open
 /// transaction (T5 — the Python copy is gone).
@@ -3002,7 +3002,7 @@ fn persist_atomic_note(
         .chars()
         .take(60)
         .collect();
-    // SYN-182 — an episode HAS a date by nature; it just never got to keep one.
+    // an episode HAS a date by nature; it just never got to keep one.
     // `durable` used to mean "event or task", so "our first meeting with Marie
     // was 18 April" was routed to `episode` (it is past) and then written with
     // event_date = NULL and event_recurring = 0. The recurring meeting-anniversary
@@ -3279,7 +3279,7 @@ fn resolve_fact_date(
         iso
     } else {
         let iso = snap_bare_day_month(&iso, capture, today);
-        // SYN-220 — un jour NU sans mois se range du côté qu'ouvre le kind.
+        // un jour NU sans mois se range du côté qu'ouvre le kind.
         // Exclu des naissances et anniversaires par la même garde que la
         // fenêtre d'année, juste au-dessus.
         snap_bare_day(&iso, capture, today, note_kind)
@@ -3402,7 +3402,7 @@ fn states_a_year(text: &str) -> bool {
 
 /// A BARE day-and-month resolves within twelve months of today.
 ///
-/// SYN-204. "on s'est mariés le 12 juin" carries no year, so the only years
+/// "on s'est mariés le 12 juin" carries no year, so the only years
 /// the capture can mean are the most recent 12 June already gone and the next
 /// one to come. A resolution thirteen months back is wrong whatever the tense,
 /// and the model produced exactly that.
@@ -3468,7 +3468,7 @@ fn states_a_month(text: &str) -> bool {
 
 /// A BARE DAY NUMBER with no month resolves inside the month the KIND opens.
 ///
-/// SYN-220. « Vivatech c'est le 24 », un lundi 13 juillet, sortait au 24 JUIN,
+/// « Vivatech c'est le 24 », un lundi 13 juillet, sortait au 24 JUIN,
 /// un mois en arrière. Aucun autre invariant ne l'attrape : le jour est bon,
 /// l'année est bonne, et la capture ne nomme aucun jour de la semaine.
 ///
@@ -3527,7 +3527,7 @@ fn snap_bare_day(date: &str, capture: &str, today: &str, kind: &str) -> String {
 
 /// A date resolved from a NAMED weekday must FALL on that weekday.
 ///
-/// SYN-204 / SYN-213. This is the one date invariant that needs no arbitration:
+/// This is the one date invariant that needs no arbitration:
 /// whatever the tense, whatever the direction, "jeudi" is a Thursday. When the
 /// model writes a date that bears another day's name it is wrong on its own
 /// terms, and we snap it to the nearest date carrying the named day, keeping
@@ -3602,7 +3602,7 @@ mod tests {
     use super::*;
 
 
-    // ── SYN-204 : une date nue jour+mois tient dans douze mois ─────────────
+    // ── une date nue jour+mois tient dans douze mois ───────────────────────
 
     #[test]
     fn a_written_year_is_left_alone() {
@@ -3664,7 +3664,7 @@ mod tests {
         );
     }
 
-    // ── SYN-213 : une date issue d'un jour NOMMÉ tombe sur ce jour ──────────
+    // ── une date issue d'un jour NOMMÉ tombe sur ce jour ────────────────────
 
     #[test]
     fn weekday_index_reads_the_calendar() {
@@ -3802,7 +3802,7 @@ mod tests {
         assert_eq!(snap_to_named_weekday("jeudi", "jeudi", today), "jeudi");
     }
 
-    // ── SYN-190 ────────────────────────────────────────────────────────────
+    // ── Réconciliation de prédicats ────────────────────────────────────────
 
     #[test]
     fn signature_collapses_empty_affixes_and_tense() {
@@ -3962,7 +3962,7 @@ mod tests {
         assert!(truthy(Some(&json!(false))) == false);
     }
 
-    // SYN-119 — the language the classifier detected must flow end-to-end:
+    // the language the classifier detected must flow end-to-end:
     // ── Les ressources ──────────────────────────────────────────────────
 
     fn capture_lien(entites: Value, ressources: Value, note: Value) -> Value {
@@ -4744,7 +4744,7 @@ mod tests {
         assert_eq!(lang.as_deref(), Some("fr"));
     }
 
-    /// SYN-182 — helper for the three gaps below. Routes one capture and hands
+    /// Helper for the three gaps below. Routes one capture and hands
     /// back the columns the ticket is about, so each test states its own case
     /// instead of repeating the same twelve lines of scaffolding.
     #[allow(clippy::type_complexity)]
@@ -4776,7 +4776,7 @@ mod tests {
         .unwrap()
     }
 
-    // ── SYN-188 — renommage déclaré en capture ──────────────────────────
+    // ── renommage déclaré en capture ────────────────────────────────────
 
     /// Route une capture qui déclare un renommage, sur une base où l'entité
     /// existe déjà ou non. Rend (nom canonique après coup, propositions).
@@ -4856,7 +4856,7 @@ mod tests {
         assert!(props.is_empty());
     }
 
-    // ── SYN-189 — négation d'un fait ────────────────────────────────────
+    // ── négation d'un fait ──────────────────────────────────────────────
 
     /// Sème une entité et ses faits vivants, puis route une capture qui ne fait
     /// QUE nier. `entities: []` est volontaire : c'est la forme d'une capture
@@ -4925,7 +4925,7 @@ mod tests {
     #[test]
     fn a_certain_negation_retires_the_fact_without_a_successor() {
         // `obsoleted_by` doit rester NULL : rien n'a remplacé ce fait, il a
-        // cessé. C'est ce qui distingue une négation d'un supersede SYN-37, et
+        // cessé. C'est ce qui distingue une négation d'un supersede, et
         // c'est ce que lit `/fact/{id}/restore` pour le rappeler.
         let (facts, proposals) = negate(
             &[("works_at", "Acme", "c0")],
@@ -4977,8 +4977,8 @@ mod tests {
     #[test]
     fn an_approximate_predicate_is_shown_never_acted_on() {
         // Hors famille, `worked_at` et `works_at` ne se rejoignent que par la
-        // signature de SYN-190 — assez proche pour être montré, jamais assez
-        // pour agir. C'est le résidu que SYN-190 laisse, et la raison pour
+        // signature de assez proche pour être montré, jamais assez
+        // pour agir. C'est le résidu que la réconciliation laisse, et la raison pour
         // laquelle il bloquait ce ticket.
         let (facts, proposals) = negate(
             &[("supported_tagging", "manual", "c0")],
@@ -5027,8 +5027,8 @@ mod tests {
         })
     }
 
-    // SYN-182 · A — "Marie told me she had to call the dentist". The prompt has
-    // promised "never as the author's own" since SYN-85 with nothing behind it:
+    // Cas A — "Marie told me she had to call the dentist". The prompt has
+    // promised "never as the author's own" for a long time, with nothing behind it:
     // there was no column to hold the answer, so the task landed in the author's
     // backlog anyway. A named owner must survive to the row; anything else and
     // the digest filter has nothing to filter on.
@@ -5047,7 +5047,7 @@ mod tests {
         assert_eq!(owner, None);
     }
 
-    // SYN-182 · B — the queue was built for task/event only, so an episode the
+    // Cas B — the queue was built for task/event only, so an episode the
     // model was 20% sure about was still written `confirmed`. A doubtful note
     // clutters; a doubtful episode ASSERTS that something took place.
     #[test]
@@ -5066,7 +5066,7 @@ mod tests {
         }
     }
 
-    // SYN-182 · C — two distinct doubts, and the costlier one is the recurrence:
+    // Cas C — two distinct doubts, and the costlier one is the recurrence:
     // it commits us to notifying the user every year, forever. The prompt only
     // justifies recurrence for a birthday, which is an `event`, so recurrence on
     // any other kind was decided without a rule.
@@ -5078,7 +5078,7 @@ mod tests {
         let (_, reason, status, date, recurring) = route_one(c);
         assert_eq!(status, "pending");
         assert_eq!(reason.as_deref(), Some("recurrence_inferee"));
-        // …et surtout la date SURVIT. Avant SYN-182, `durable` excluait
+        // …et surtout la date SURVIT. Avant ce changement, `durable` excluait
         // l'épisode : « notre rencontre avec Marie était le 18 avril » était
         // écrit avec NULL et 0, donc l'anniversaire de rencontre était détruit
         // à l'insertion, sans qu'aucune règle de récurrence puisse le sauver.

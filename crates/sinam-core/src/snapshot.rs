@@ -1,4 +1,4 @@
-//! Local read snapshot for app replicas (SYN-132).
+//! Local read snapshot for app replicas.
 //!
 //! A phone that embeds the core holds a fully synced copy of the database,
 //! but the app's read replica historically only knew how to consume the
@@ -22,7 +22,7 @@ fn cell_to_json(v: ValueRef<'_>) -> Value {
         ValueRef::Integer(i) => json!(i),
         ValueRef::Real(f) => json!(f),
         ValueRef::Text(t) => Value::String(String::from_utf8_lossy(t).into_owned()),
-        // JSON can't hold bytes; base64 matches what /changes ships (SYN-91).
+        // JSON can't hold bytes; base64 matches what /changes ships.
         ValueRef::Blob(b) => Value::String(Base64::encode_string(b)),
     }
 }
@@ -69,7 +69,7 @@ fn display(v: Option<&Value>) -> String {
 fn changes(conn: &Connection) -> Result<Value, CoreError> {
     let mut entities = query_rows(conn, "SELECT * FROM entities", &[])?;
     for e in &mut entities {
-        // SYN-91: the raw BLOB column is dropped and shipped as embedding_b64
+        // the raw BLOB column is dropped and shipped as embedding_b64
         // (cell_to_json already made it a base64 string).
         let emb = e.remove("embedding").unwrap_or(Value::Null);
         e.insert("embedding_b64".into(), emb);
@@ -151,7 +151,7 @@ fn project_state(conn: &Connection, id: &str, name: &Value) -> Result<Value, Cor
         [id],
         |r| r.get(0),
     )?;
-    // SYN-134 — projects carry facts now; same ACTIVE-only slice as the
+    // projects carry facts now; same ACTIVE-only slice as the
     // backend endpoint (api/app.py::project_state).
     let facts = query_rows(
         conn,
@@ -268,10 +268,10 @@ fn merge_proposals(conn: &Connection) -> Result<Vec<Value>, CoreError> {
     Ok(out)
 }
 
-/// The `GET /atomic-notes?review_status=pending` payload (SYN-143): the
+/// The `GET /atomic-notes?review_status=pending` payload: the
 /// « À valider » queue.
 ///
-/// SYN-182 — it used to hold only task/event, and only one implicit question:
+/// It used to hold only task/event, and only one implicit question:
 /// « I might lose this, keep it? ». It now also holds notes and episodes, whose
 /// question is a different one — « I am not sure this deserves to exist » — and
 /// recurrences, whose question is « does this date really come back every year? ».
@@ -303,7 +303,7 @@ fn pending_tasks(conn: &Connection) -> Result<Vec<Value>, CoreError> {
     Ok(out)
 }
 
-/// The `GET /relations/pending` payload (SYN-143): low-confidence relations,
+/// The `GET /relations/pending` payload: low-confidence relations,
 /// names resolved on both ends.
 fn pending_relations(conn: &Connection) -> Result<Vec<Map<String, Value>>, CoreError> {
     query_rows(
@@ -319,7 +319,7 @@ fn pending_relations(conn: &Connection) -> Result<Vec<Map<String, Value>>, CoreE
     )
 }
 
-/// The `GET /space` payload (SYN-139): replicated singleton + who we are and
+/// The `GET /space` payload: replicated singleton + who we are and
 /// who tisses. `space` stays null until the owner founds it (first cycle).
 fn space(conn: &Connection) -> Result<Value, CoreError> {
     let space = first_row(
@@ -341,7 +341,7 @@ fn space(conn: &Connection) -> Result<Value, CoreError> {
     }))
 }
 
-/// The `GET /devices` payload (SYN-139). `last_pull_at` is a backend notion
+/// The `GET /devices` payload. `last_pull_at` is a backend notion
 /// (its per-peer pull cursors, `sync_meta 'pulled_at:%'`); the mesh copy has
 /// no local equivalent, so the field is omitted and the app DTO's null
 /// default applies.
@@ -375,11 +375,11 @@ fn devices(conn: &Connection) -> Result<Vec<Value>, CoreError> {
 }
 
 /// The whole local read snapshot, one JSON object per consumed endpoint.
-/// Port of the map's exact `GET /graph?include_notes=true&cluster=true` call
-/// (SYN-145). Deliberately NOT ported: `layout` (x/y come from
-/// `node_positions`, a backend projection cache that never replicates — the
-/// app computes its own ForceLayout since SYN-64) and `clusters` labels/hulls
-/// (Haiku cache) — the core renders `clusters: []`. Communities come from a
+/// Port of the map's exact `GET /graph?include_notes=true&cluster=true` call.
+/// Deliberately NOT ported: `clusters` labels/hulls (a Haiku cache) — the
+/// core renders `clusters: []`. The layout IS ported (`place_nodes`): x/y
+/// travel with the graph, and `node_positions` stays a backend cache that
+/// never replicates. Communities come from a
 /// deterministic label propagation: stable across pulls, not id-identical to
 /// the backend's Louvain (accepted — the two sources never mix on screen:
 /// HTTP serves the map online, this snapshot only when the Mac is silent).
@@ -439,7 +439,7 @@ pub(crate) fn graph(
         nodes.push(n);
     }
 
-    // Relation edges — pending ones are hidden everywhere (SYN-143 queue).
+    // Relation edges — pending ones are hidden everywhere (queue).
     let mut edges: Vec<Map<String, Value>> = Vec::new();
     for r in query_rows(
         conn,
@@ -1170,7 +1170,7 @@ pub fn read_snapshot(conn: &Connection) -> Result<Value, CoreError> {
 }
 
 /// The `/capture/{id}/generated` payload — reverse provenance for one capture
-/// (SYN-92's « ce qui en est sorti » panel, served from the local core db).
+/// (the « ce qui en est sorti » panel, served from the local core db).
 pub fn generated_for_capture(conn: &Connection, capture_id: &str) -> Result<Value, CoreError> {
     let entities = query_rows(
         conn,

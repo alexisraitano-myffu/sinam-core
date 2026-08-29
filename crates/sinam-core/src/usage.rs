@@ -1,4 +1,4 @@
-//! SYN-160 — what every LLM call actually consumed.
+//! What every LLM call actually consumed.
 //!
 //! One row per call, never aggregated at write time: a total can always be
 //! recomputed from rows, the reverse is not true. The rows replicate like any
@@ -9,7 +9,7 @@
 //! Note on what this table is NOT: it is not a mirror of the provider's
 //! billing. Two devices routing the same capture during a no-sync window make
 //! two real API calls and are really billed twice; both rows are kept on
-//! purpose. `SYN-133` collapses the derived twins, not the money spent.
+//! purpose. The post-pull dedup collapses the derived twins, not the money spent.
 
 use rusqlite::{params, Connection};
 use serde_json::{json, Value};

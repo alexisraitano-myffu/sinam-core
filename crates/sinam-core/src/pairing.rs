@@ -1,4 +1,4 @@
-//! Device pairing channel (SYN-128) — authenticated ECDH so a new device can
+//! Device pairing channel — authenticated ECDH so a new device can
 //! join an existing memory space without the user copying a 48-char token.
 //!
 //! Threat model. The two devices are on the same LAN; a passive or active
@@ -203,7 +203,7 @@ pub fn accept(offer: &PairingOffer) -> Result<([u8; 32], [u8; 32]), CoreError> {
 
 /// AEAD-seal `plaintext` under the channel key, binding both handshake
 /// messages as AAD (X25519 public keys for the QR channel, SPAKE2 messages
-/// for the code channel — SYN-137). Output = nonce ‖ ciphertext, base64.
+/// for the code channel). Output = nonce ‖ ciphertext, base64.
 /// Called by the payload holder ONLY after the user approves the join.
 pub fn seal(
     channel_key: &[u8; 32],
@@ -255,7 +255,7 @@ pub fn open(
         .map_err(|_| CoreError::Storage("pairing: open failed (wrong channel / tampered)".into()))
 }
 
-// ── code pairing (SYN-137) — Mac↔Mac, no camera ──────────────────────────────
+// ── code pairing — Mac↔Mac, no camera ────────────────────────────────────────
 //
 // A 6-digit code cannot ride the QR scheme above: mixed into HKDF it would be
 // offline-brute-forceable (10^6 tries against one observed exchange). SPAKE2
@@ -424,7 +424,7 @@ mod tests {
         assert_ne!(o1.offer_pub, o2.offer_pub);
     }
 
-    /// SYN-137 happy path: same code → same key, MAC confirms, seal/open
+    /// Happy path: same code → same key, MAC confirms, seal/open
     /// round-trips the payload with the SPAKE2 messages as AAD.
     #[test]
     fn code_pairing_same_code_transfers_payload() {

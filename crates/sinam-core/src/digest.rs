@@ -1,8 +1,8 @@
-//! SYN-23 — weekly digest (T5 port of `dream_cycle/digest.py`).
+//! Weekly digest (T5 port of `dream_cycle/digest.py`).
 //!
 //! One durable note per ISO week condensing the past week AND the week ahead:
 //! retrospective (new entities/facts/notes + "tendances"), forward-looking
-//! (dated events & tasks within 7 days, incl. recurring birthdays — SYN-97 —
+//! (dated events & tasks within 7 days, incl. recurring birthdays,
 //! and open undated tasks). Idempotent per week: re-running overwrites.
 //!
 //! Split mirrors the host call sites:
@@ -30,7 +30,7 @@ const MAX_NOTES: i64 = 25;
 const MAX_TRENDS: i64 = 8;
 const MAX_TASKS: i64 = 20;
 
-// SYN-97 — birthday facts surfaced under « à venir » (recurring yearly,
+// birthday facts surfaced under « à venir » (recurring yearly,
 // month-day match). Subset of SINGLE_VALUED_PREDICATES denoting a birth date.
 const BIRTHDAY_PREDICATES: [&str; 4] =
     ["has_birthday", "birthday", "born_on", "date_of_birth"];
@@ -99,7 +99,7 @@ pub(crate) fn gather_week(
         |r| r.get(0),
     )?;
 
-    // Forward-looking — dated events AND dated tasks (SYN-23) not archived,
+    // Forward-looking — dated events AND dated tasks not archived,
     // within the horizon. Recurring (birthdays) compared on month-day;
     // one-shots on the absolute date. Filtered in code so the year-boundary
     // case stays correct.
@@ -145,7 +145,7 @@ pub(crate) fn gather_week(
         }));
     }
 
-    // SYN-97 — birthdays live as `has_birthday` facts, not (only) as event
+    // birthdays live as `has_birthday` facts, not (only) as event
     // notes. Treat them as recurring (yearly month-day) and dedup against any
     // event note that already names the same person on the same day (the
     // cycle emits BOTH for a birthday).
@@ -189,7 +189,7 @@ pub(crate) fn gather_week(
             continue;
         }
         upcoming.push(json!({
-            // SYN-119 — EN-base like every other skeleton string: this title
+            // EN-base like every other skeleton string: this title
             // travels INTO the digest payload, and a French label in English
             // material pushes the renderer toward French (mesuré sur Gemma E2B).
             // The prompt renders it in the material's dominant language.
@@ -207,10 +207,10 @@ pub(crate) fn gather_week(
     upcoming.sort_by(|a, b| a["date"].as_str().cmp(&b["date"].as_str()));
 
     // Open tasks WITHOUT a date (dated ones already surface under « à venir »).
-    // SYN-182 — `owner IS NULL` means the author, so this is « my open tasks ».
+    // `owner IS NULL` means the author, so this is « my open tasks ».
     // A task extracted from reported speech ("Marie told me she had to call the
     // dentist") carries her name and stays out of this list; it lives on her
-    // fiche instead. The prompt has promised exactly that since SYN-85, and this
+    // fiche instead. The prompt has promised exactly that for a long time, and this
     // is the first place the promise is actually kept.
     let open_tasks = query_row_maps(
         conn,
@@ -282,13 +282,13 @@ impl Brain {
         let week_start = week["week_start"].as_str().unwrap_or("");
         let params_json = json!({
             "model": config.model,
-            // SYN-124 — markdown long + marge de raisonnement, cf. summaries::resummarize.
+            // markdown long + marge de raisonnement, cf. summaries::resummarize.
             "max_tokens": 3072,
             "system": system,
             "messages": [{"role": "user", "content": format!(
                 "Material for the week of {week_start}:\n\n{payload}")}],
         });
-        // SYN-160 — le digest porte le prompt et la sortie les plus longs du
+        // le digest porte le prompt et la sortie les plus longs du
         // cycle : c'est ici que le coût réel se joue, pas sur la classification.
         let (text, used) = post_messages_text(config, &params_json)?;
         {

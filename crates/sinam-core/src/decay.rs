@@ -1,8 +1,8 @@
-//! SYN-19/68 — Ebbinghaus graceful forgetting (T5 port of `dream_cycle/decay.py`).
+//! Ebbinghaus graceful forgetting (T5 port of `dream_cycle/decay.py`).
 //!
 //! `memory_strength = exp(-Δdays / τ)` where Δdays is the time since the row's
 //! reactivation anchor (`atomic_notes.last_reactivated_at`, falling back to
-//! `created_at`; `entities.last_mentioned` for SYN-68). The score is
+//! `created_at`; `entities.last_mentioned` for entities). The score is
 //! **recomputed from elapsed time**, never decremented in place, so it is
 //! independent of how often the decay job runs. Reactivation moves the anchor
 //! toward now: full reset for a fresh mention (factor 1.0), partial for a
@@ -28,7 +28,7 @@ fn tau_default() -> f64 {
         .unwrap_or(30.0)
 }
 
-/// SYN-171 — a lived episode ("j'ai déjeuné avec Manon") is worth keeping, but
+/// A lived episode ("j'ai déjeuné avec Manon") is worth keeping, but
 /// not at the weight of a note or a task: it is what happened, not what to do
 /// or what holds. It fades on a shorter τ (10 days vs 30, so it sits near 0.05
 /// after a month where a note is still at 0.37) and is never deleted — the
@@ -128,7 +128,7 @@ pub(crate) fn apply_decay(
     Ok(n)
 }
 
-/// SYN-68: same law for entities, anchored on `last_mentioned`.
+/// Same law for entities, anchored on `last_mentioned`.
 pub(crate) fn apply_entity_decay(
     conn: &Connection,
     tau_days: Option<f64>,

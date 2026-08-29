@@ -1,4 +1,4 @@
-# T4 (SYN-113) phase 1 — the iOS toolchain wall, entirely in CI (no local
+# T4 phase 1 — the iOS toolchain wall, entirely in CI (no local
 # Xcode). Produces SinamCore.xcframework + UniFFI Swift bindings, and proves
 # embedding parity by running the same probe on macOS and on an iOS simulator.
 #

@@ -70,14 +70,14 @@ impl Embedder {
         py.detach(|| self.inner.embed(text)).map_err(core_err)
     }
 
-    /// One vector per ~128-token window of the text (SYN-118); a short text
+    /// One vector per ~128-token window of the text; a short text
     /// yields a single vector identical to `embed`.
     fn embed_chunks(&self, py: Python<'_>, text: &str) -> PyResult<Vec<Vec<f32>>> {
         py.detach(|| self.inner.embed_chunks(text)).map_err(core_err)
     }
 }
 
-/// Storage substrate backed by the shared Rust core (SYN-110 / T1).
+/// Storage substrate backed by the shared Rust core.
 ///
 /// Owns the SQLite schema (created/migrated on open) and every vector
 /// read/write. Blobs are the sqlite-vec serialized float32 format, exactly
@@ -109,7 +109,7 @@ impl Storage {
             .map_err(core_err)
     }
 
-    /// Chunked upsert (SYN-118): one blob per ~128-token window, chunk 0
+    /// Chunked upsert: one blob per ~128-token window, chunk 0
     /// keyed by the note uuid (back-compat), then `uuid#k`.
     fn upsert_note_vectors(
         &self,
@@ -189,7 +189,7 @@ impl Storage {
             .collect())
     }
 
-    // ── P2P sync (SYN-112 T3): engine surface for the phase-3 transport ──
+    // ── P2P sync: engine surface for the phase-3 transport ──
 
     fn sync_device_id(&self, py: Python<'_>) -> PyResult<String> {
         py.detach(|| self.inner.sync_device_id()).map_err(core_err)
@@ -210,7 +210,7 @@ impl Storage {
             .map_err(core_err)
     }
 
-    /// SYN-133 — post-pull twin dedup (collapse on the smallest uuid,
+    /// Post-pull twin dedup (collapse on the smallest uuid,
     /// tombstones journaled, doomed notes' vectors swept) → JSON report.
     fn dedup_after_pull(&self, py: Python<'_>) -> PyResult<String> {
         py.detach(|| self.inner.dedup_after_pull()).map_err(core_err)
@@ -282,7 +282,7 @@ impl SqlConnection {
         self.get()?.last_insert_rowid().map_err(core_err)
     }
 
-    /// Shared fact write (SYN-37 supersede + dedup) executed on THIS
+    /// Shared fact write (supersede + dedup) executed on THIS
     /// connection, so the caller's open `with conn:` transaction wraps it
     /// (the `Brain` variant runs on its own connection — SQLITE_BUSY inside
     /// a host transaction). JSON scalars like `Brain.insert_fact`.
@@ -324,7 +324,7 @@ impl SqlConnection {
         .map_err(core_err)
     }
 
-    /// SYN-19 decay pass over atomic_notes; `now` = optional fixed clock
+    /// Decay pass over atomic_notes; `now` = optional fixed clock
     /// 'YYYY-MM-DD HH:MM:SS' (tests inject it), None = system now.
     #[pyo3(signature = (tau_days=None, now=None))]
     fn apply_decay(
@@ -338,7 +338,7 @@ impl SqlConnection {
             .map_err(core_err)
     }
 
-    /// SYN-68 decay pass over entities (anchor `last_mentioned`).
+    /// Decay pass over entities (anchor `last_mentioned`).
     #[pyo3(signature = (tau_days=None, now=None))]
     fn apply_entity_decay(
         &self,
@@ -390,7 +390,7 @@ impl SqlConnection {
         Ok(graph.to_string())
     }
 
-    /// SYN-23 — the digest's structured week as JSON (pure SQL on THIS
+    /// The digest's structured week as JSON (pure SQL on THIS
     /// connection, offline). `now` = optional fixed clock 'YYYY-MM-DD HH:MM:SS'.
     #[pyo3(signature = (now=None, days=7))]
     fn gather_week(&self, py: Python<'_>, now: Option<String>, days: i64) -> PyResult<String> {
@@ -454,7 +454,7 @@ fn brain_err(e: sinam_core::CoreError) -> PyErr {
     }
 }
 
-/// The Dream Cycle brain (SYN-111): deterministic routing + classifier
+/// The Dream Cycle brain: deterministic routing + classifier
 /// orchestration. JSON strings across the boundary — the classified dict is
 /// polymorphic and the report is consumed as a dict anyway.
 #[pyclass]
@@ -523,7 +523,7 @@ impl Brain {
 
     /// `messages.create` params for ONE HALF of one capture (Batch API path) → JSON.
     ///
-    /// SYN-171 — `half` is "note" or "graph". The batch path must now submit two
+    /// `half` is "note" or "graph". The batch path must now submit two
     /// requests per capture and merge them with `merge_classify_halves`; there is
     /// no default on purpose, so a caller that was not updated fails loudly
     /// instead of silently classifying half the capture.
@@ -584,7 +584,7 @@ impl Brain {
         let config = sinam_core::LlmConfig {
             model: model.to_string(),
             api_key: api_key.to_string(),
-            // Backend Mac path is Anthropic today; SYN-152 will expose the
+            // Backend Mac path is Anthropic today; a later change will expose the
             // provider selector once the settings endpoint lands.
             provider: sinam_core::LlmProvider::Anthropic,
             local: None,
@@ -599,7 +599,7 @@ impl Brain {
         Ok(classified.to_string())
     }
 
-    /// SYN-89 re-summary pass (T5): entities touched by the run + stale ones,
+    /// Re-summary pass (T5): entities touched by the run + stale ones,
     /// summaries rebuilt from active facts/relations via the LLM. Returns the
     /// regenerated entity ids as a JSON array. HTTP failure stops the pass
     /// silently (stale flags survive) — mirror of the Python `break`.
@@ -620,7 +620,7 @@ impl Brain {
         let config = sinam_core::LlmConfig {
             model: model.to_string(),
             api_key: api_key.to_string(),
-            // Backend Mac path is Anthropic today; SYN-152 will expose the
+            // Backend Mac path is Anthropic today; a later change will expose the
             // provider selector once the settings endpoint lands.
             provider: sinam_core::LlmProvider::Anthropic,
             local: None,
@@ -635,7 +635,7 @@ impl Brain {
         Ok(serde_json::Value::from(ids).to_string())
     }
 
-    /// SYN-43/44 living project synthesis (T5): append + threshold-triggered
+    /// Living project synthesis (T5): append + threshold-triggered
     /// refinement. Returns the new summary_md or None (failures never block).
     #[pyo3(signature = (project_id, project_name, new_entry_content, new_entry_count,
                         model, api_key, prompts_dir, today, base_url=None, fuel_token=None))]
@@ -657,7 +657,7 @@ impl Brain {
         let config = sinam_core::LlmConfig {
             model: model.to_string(),
             api_key: api_key.to_string(),
-            // Backend Mac path is Anthropic today; SYN-152 will expose the
+            // Backend Mac path is Anthropic today; a later change will expose the
             // provider selector once the settings endpoint lands.
             provider: sinam_core::LlmProvider::Anthropic,
             local: None,
@@ -713,7 +713,7 @@ impl Brain {
             .map_err(brain_err)
     }
 
-    /// Shared fact write (SYN-37 supersede + dedup) for the validation /
+    /// Shared fact write (supersede + dedup) for the validation /
     /// reclassify endpoints. `value`/`source_inbox_id`/`category` are JSON
     /// scalars (bound like Python bound the native values).
     #[pyo3(signature = (entity_id, predicate, value_json, confidence,
@@ -753,7 +753,7 @@ impl Brain {
         .map_err(brain_err)
     }
 
-    /// SYN-23 — render the gathered week (JSON str) into the digest markdown
+    /// Render the gathered week (JSON str) into the digest markdown
     /// (prompt = data `digest.md`, LLM via the core HTTP path). Raises
     /// ConnectionError on HTTP failure, ValueError on empty content.
     #[pyo3(signature = (week_json, model, api_key, prompts_dir, today,
@@ -775,7 +775,7 @@ impl Brain {
         let config = sinam_core::LlmConfig {
             model: model.to_string(),
             api_key: api_key.to_string(),
-            // Backend Mac path is Anthropic today; SYN-152 will expose the
+            // Backend Mac path is Anthropic today; a later change will expose the
             // provider selector once the settings endpoint lands.
             provider: sinam_core::LlmProvider::Anthropic,
             local: None,
@@ -788,7 +788,7 @@ impl Brain {
             .map_err(brain_err)
     }
 
-    /// SYN-23 — store the digest note (idempotent per ISO week) + its vector,
+    /// Store the digest note (idempotent per ISO week) + its vector,
     /// on the Brain's OWN connection: call outside host transactions. Returns
     /// the note id.
     fn write_digest_note(
@@ -803,7 +803,7 @@ impl Brain {
             .map_err(brain_err)
     }
 
-    /// SYN-21 — fetch → extract → summarise → store one URL (idempotent on
+    /// Fetch → extract → summarise → store one URL (idempotent on
     /// the URL, Brain's OWN connection: call outside host transactions).
     /// `model=None` → no LLM (snippet-fallback summary), like client=None.
     #[pyo3(signature = (url, capture_id=None, model=None, api_key=None, prompts_dir=None,
@@ -826,7 +826,7 @@ impl Brain {
             .map_err(brain_err)
     }
 
-    /// SYN-21 — process every URL found in a capture (each independent, one
+    /// Process every URL found in a capture (each independent, one
     /// failure never blocks the others). Returns the stored resource ids as a
     /// JSON array.
     #[pyo3(signature = (content, capture_id=None, model=None, api_key=None, prompts_dir=None,
@@ -895,7 +895,7 @@ fn parse_classify_text(text: &str, content_len: usize, stop_reason: Option<&str>
         .map_err(brain_err)
 }
 
-/// SYN-171 — fuse the two classifier halves into the single object the router
+/// Fuse the two classifier halves into the single object the router
 /// has always consumed. Exposed rather than reimplemented host-side: two copies
 /// of a merge rule drift, and the drift would be silent (each half owns its own
 /// keys, so a wrong merge loses fields instead of raising).
@@ -908,7 +908,7 @@ fn merge_classify_halves(note_json: &str, graph_json: &str) -> PyResult<String> 
     Ok(sinam_core::merge_halves(note, graph).to_string())
 }
 
-/// SYN-23 — next concrete date of a (possibly recurring) event, ISO strings;
+/// Next concrete date of a (possibly recurring) event, ISO strings;
 /// None when `event_date` doesn't parse (Python returned None there too).
 #[pyfunction]
 fn next_occurrence(event_date: &str, recurring: bool, today: &str) -> Option<String> {
@@ -936,20 +936,20 @@ fn llm_config_opt(
     })
 }
 
-/// SYN-21 — all http(s) URLs in a text, de-duplicated, order-preserving.
+/// All http(s) URLs in a text, de-duplicated, order-preserving.
 #[pyfunction]
 fn extract_urls(text: &str) -> Vec<String> {
     sinam_core::extract_urls(text)
 }
 
-/// SYN-21 — title + visible text of an HTML document, as JSON {title, text}.
+/// Title + visible text of an HTML document, as JSON {title, text}.
 #[pyfunction]
 fn extract_page(html: &str) -> String {
     let page = sinam_core::extract_page(html);
     serde_json::json!({"title": page.title, "text": page.text}).to_string()
 }
 
-/// SYN-21 — GET a URL and extract {title, text} (JSON); None on any failure.
+/// GET a URL and extract {title, text} (JSON); None on any failure.
 #[pyfunction]
 #[pyo3(signature = (url, timeout=10.0))]
 fn fetch_and_extract(py: Python<'_>, url: &str, timeout: f64) -> Option<String> {
@@ -958,7 +958,7 @@ fn fetch_and_extract(py: Python<'_>, url: &str, timeout: f64) -> Option<String> 
         .map(|p| serde_json::json!({"title": p.title, "text": p.text}).to_string())
 }
 
-/// Pairing offerer session (SYN-128): the device that SHOWS the QR keeps this
+/// Pairing offerer session: the device that SHOWS the QR keeps this
 /// between showing the offer and receiving the scanner's returned key.
 #[pyclass]
 struct PairingSession {
@@ -992,7 +992,7 @@ impl PairingSession {
     }
 }
 
-/// Scanner side (SYN-128): decode the QR, return (accept_pub, channel_key) as
+/// Scanner side: decode the QR, return (accept_pub, channel_key) as
 /// bytes. Send accept_pub back to the offerer over the transport.
 #[pyfunction]
 fn pairing_accept<'py>(
@@ -1013,7 +1013,7 @@ fn pairing_offer_addrs(qr: &str) -> PyResult<Vec<String>> {
         .addrs)
 }
 
-/// AEAD-seal a payload under the channel key (SYN-128/137). Returns base64.
+/// AEAD-seal a payload under the channel key. Returns base64.
 /// `offer_pub`/`accept_pub` are the two handshake messages of the channel —
 /// X25519 keys (32 B, QR) or SPAKE2 messages (33 B, code) — bound as AAD.
 #[pyfunction]
@@ -1027,7 +1027,7 @@ fn pairing_seal(
     sinam_core::pairing_seal(&ck, offer_pub, accept_pub, plaintext).map_err(core_err)
 }
 
-/// Open what `pairing_seal` produced (SYN-128/137) → the plaintext bytes.
+/// Open what `pairing_seal` produced → the plaintext bytes.
 #[pyfunction]
 fn pairing_open<'py>(
     py: Python<'py>,
@@ -1048,7 +1048,7 @@ fn channel_key32(channel_key: &[u8]) -> PyResult<[u8; 32]> {
         .map_err(|_| PyRuntimeError::new_err("channel_key must be 32 bytes"))
 }
 
-/// SYN-137 — one side of the PAKE on the 6-digit code (symmetric: member and
+/// One side of the PAKE on the 6-digit code (symmetric: member and
 /// joiner run the same role). Keep it between sending our message and
 /// receiving the peer's; `finish` is one-shot. Never log the code, the
 /// messages or the key.
@@ -1087,7 +1087,7 @@ impl CodePairing {
     }
 }
 
-/// SYN-137 joiner side: key-confirmation MAC over the transcript.
+/// Joiner side: key-confirmation MAC over the transcript.
 #[pyfunction]
 fn pairing_code_confirm_mac<'py>(
     py: Python<'py>,
@@ -1102,7 +1102,7 @@ fn pairing_code_confirm_mac<'py>(
     ))
 }
 
-/// SYN-137 member side: constant-time verify; a mismatch burns one attempt.
+/// Member side: constant-time verify; a mismatch burns one attempt.
 #[pyfunction]
 fn pairing_code_confirm_verify(
     channel_key: &[u8],

@@ -1,4 +1,4 @@
-//! SYN-135 — local application of the mobile app's action log.
+//! Local application of the mobile app's action log.
 //!
 //! Mirror of the desktop backend's write endpoints (`api/app.py` +
 //! `dream_cycle/validation.py`) so a phone-only install applies user gestures
@@ -121,7 +121,7 @@ fn row_exists(conn: &Connection, table: &str, id: &str) -> Result<bool, CoreErro
     Ok(n > 0)
 }
 
-/// SYN-89 — any fact write/lifecycle change invalidates the derived summary.
+/// Any fact write/lifecycle change invalidates the derived summary.
 fn mark_fact_entity_stale(conn: &Connection, fact_id: &str) -> Result<(), CoreError> {
     conn.execute(
         "UPDATE entities SET summary_stale = 1 \
@@ -190,7 +190,7 @@ fn validate_fact(conn: &Connection, p: &Map<String, Value>) -> Result<Value, Cor
         .and_then(Value::as_str)
         .unwrap_or("unknown")
         .to_string();
-    // SYN-41/112 — provenance traces back to the spawning capture; integer
+    // provenance traces back to the spawning capture; integer
     // legacy payloads keep their text form.
     let prov_id = match fact_data.get("source_inbox_id") {
         None | Some(Value::Null) => None,
@@ -236,7 +236,7 @@ fn validate_fact(conn: &Connection, p: &Map<String, Value>) -> Result<Value, Cor
 }
 
 /// Port of `_set_timestamp` for facts (`/fact/{id}/archive|unarchive|obsolete|
-/// restore`) — plus the SYN-89 stale mark the Python helper applies to facts.
+/// restore`) — plus the stale mark the Python helper applies to facts.
 fn fact_timestamp(conn: &Connection, fact_id: &str, set_clause: &str) -> Result<Value, CoreError> {
     if !row_exists(conn, "facts", fact_id)? {
         return not_found();
@@ -314,7 +314,7 @@ fn change_type(conn: &Connection, p: &Map<String, Value>) -> Result<Value, CoreE
     ok("ok")
 }
 
-/// Rename half of `PATCH /entity/{entity_id}` (SYN-82) — the old
+/// Rename half of `PATCH /entity/{entity_id}` — the old
 /// canonical_name is kept as an alias so the resolver still matches it.
 fn rename_entity(conn: &Connection, p: &Map<String, Value>) -> Result<Value, CoreError> {
     let entity_id = s(p, "entityId");
@@ -355,7 +355,7 @@ fn rename_entity(conn: &Connection, p: &Map<String, Value>) -> Result<Value, Cor
 
 // ── relations ────────────────────────────────────────────────────────────────
 
-/// Port of `POST /relation` (SYN-84) — user origin → confidence 1.0. The app
+/// Port of `POST /relation` — user origin → confidence 1.0. The app
 /// mints the id client-side so the offline replay is idempotent.
 fn create_relation(conn: &Connection, p: &Map<String, Value>) -> Result<Value, CoreError> {
     let Some(predicate) = opt(p, "predicate") else {
@@ -439,7 +439,7 @@ fn reinforce_note(conn: &Connection, note_id: &str) -> Result<Value, CoreError> 
     ok("ok")
 }
 
-/// `POST /atomic-note/{id}/date` — a dated task stays a task (SYN-23).
+/// `POST /atomic-note/{id}/date` — a dated task stays a task.
 fn set_note_date(conn: &Connection, p: &Map<String, Value>) -> Result<Value, CoreError> {
     let date = opt(p, "date");
     let recurring = (date.is_some() && is_true(p, "recurring")) as i64;
@@ -537,7 +537,7 @@ fn resolve_proposal(
 }
 
 /// Port of `POST /merge-proposals/{id}/accept` + `_reroute_to_canonical`:
-/// facts/relations repointed, `entities_mentioned` names swapped (SYN-42),
+/// facts/relations repointed, `entities_mentioned` names swapped,
 /// absorbed side soft-linked (`merged_into_id`, no DELETE — lineage kept).
 fn accept_merge(conn: &Connection, p: &Map<String, Value>) -> Result<Value, CoreError> {
     let proposal_id = s(p, "id");
@@ -673,7 +673,7 @@ fn accept_merge(conn: &Connection, p: &Map<String, Value>) -> Result<Value, Core
     }))
 }
 
-/// Port of `POST /entity-type-proposals/{id}/accept` (SYN-58) — extend the
+/// Port of `POST /entity-type-proposals/{id}/accept` — extend the
 /// vocab, promote the pending candidate entity.
 fn accept_type(conn: &Connection, p: &Map<String, Value>) -> Result<Value, CoreError> {
     let proposal_id = s(p, "id");
@@ -815,7 +815,7 @@ fn accept_project_attach(conn: &Connection, p: &Map<String, Value>) -> Result<Va
     }))
 }
 
-// ── « À valider » : tâches + liens + retry capture (SYN-143) ─────────────────
+// ── « À valider » : tâches + liens + retry capture ───────────────────────────
 
 /// Ports of `app.py::note_confirm` / `relation_confirm`: promote a
 /// low-confidence row from review_status='pending' into the live view.
@@ -838,7 +838,7 @@ fn confirm_pending(conn: &Connection, table: &str, id: &str) -> Result<Value, Co
     }
 }
 
-/// Port of `app.py::inbox_requeue` (SYN-77): put a failed capture back in the
+/// Port of `app.py::inbox_requeue`: put a failed capture back in the
 /// queue for the next owned cycle.
 fn requeue_capture(conn: &Connection, id: &str) -> Result<Value, CoreError> {
     let n = conn.execute(
@@ -856,12 +856,12 @@ fn requeue_capture(conn: &Connection, id: &str) -> Result<Value, CoreError> {
     }
 }
 
-// ── project entries (SYN-144) ────────────────────────────────────────────────
+// ── project entries ──────────────────────────────────────────────────────────
 // Mirrors of `POST /project-entries/{id}/attach-to-project|detach|
-// reclassify-as-fact` (SYN-45/55): the projection moves, the immutable inbox
+// reclassify-as-fact`: the projection moves, the immutable inbox
 // capture is never touched. HTTP 400/404/409 guards become Ok statuses.
 
-/// `capture_id` like Python's `str()` — TEXT uuid since SYN-112, but legacy
+/// `capture_id` like Python's `str()` — TEXT uuid since the id migration, but legacy
 /// rows may still carry the historical integer form.
 fn value_to_string(v: Option<&Value>) -> String {
     match v {
@@ -874,7 +874,7 @@ fn value_to_string(v: Option<&Value>) -> String {
 /// Port of `app.py::attach_entry_to_project`: additive parallel rattachement —
 /// INSERT a sibling entry on the target project, the source row stays. Unlike
 /// the backend endpoint, the outcome carries a `synthesis` job so the new
-/// entry reaches the target's living prose (host post-commit, SYN-135 patron).
+/// entry reaches the target's living prose (host post-commit, same pattern).
 fn attach_entry(conn: &Connection, p: &Map<String, Value>) -> Result<Value, CoreError> {
     let project_id = s(p, "projectId");
     let src = query_row_map(
@@ -949,7 +949,7 @@ fn detach_entry(conn: &Connection, entry_id: &str) -> Result<Value, CoreError> {
 /// Port of `app.py::reclassify_entry_as_fact`: the entry becomes an explicit
 /// fact on the target entity (confidence 1.0 — the user vouches for it),
 /// provenance kept, the projection row deleted. `insert_fact` marks the
-/// entity `summary_stale` (SYN-89) so the prose replays at the next cycle.
+/// entity `summary_stale` so the prose replays at the next cycle.
 fn reclassify_entry_as_fact(conn: &Connection, p: &Map<String, Value>) -> Result<Value, CoreError> {
     let entry_id = s(p, "entryId");
     let entity_id = s(p, "entityId");
@@ -983,7 +983,7 @@ fn reclassify_entry_as_fact(conn: &Connection, p: &Map<String, Value>) -> Result
     Ok(json!({ "status": "reclassified", "fact_id": fact_id }))
 }
 
-// ── space + devices (SYN-139) ────────────────────────────────────────────────
+// ── space + devices ──────────────────────────────────────────────────────────
 // Mirrors of `PATCH /space` and `PATCH /device/{id}`. The HTTP guards (422 on
 // blank name, 409 on self-revoke / revoking the weaver) become Ok statuses
 // here: the UI blocks those gestures upfront, and a queued action must never

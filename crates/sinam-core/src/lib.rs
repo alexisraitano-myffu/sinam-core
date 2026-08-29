@@ -37,5 +37,5 @@ pub use resources::{extract_page, extract_urls, fetch_and_extract, PageText};
 pub use routing::{Brain, ProjectSynthesis, RouteContext, RouteReport};
 pub use sql::{connect, SqlConnection, SqlResult, SqlValue};
 pub use storage::{EntityHit, NoteHit, ResourceHit, Storage};
-// SYN-160 — consommation réelle des appels LLM (tokens, jamais un prix).
+// consommation réelle des appels LLM (tokens, jamais un prix).
 pub use usage::{usage_summary, LlmUsage, Op as LlmOp};

@@ -1,11 +1,11 @@
-//! Classifier orchestration (SYN-111 / T2): prompt build + Anthropic HTTP +
+//! Classifier orchestration: prompt build + Anthropic HTTP +
 //! tolerant parse — the LLM I/O half of the Dream Cycle brain.
 //!
-//! The prompt is DATA (SYN-96 invariant): versioned in this repo, read at
+//! The prompt is DATA (invariant): versioned in this repo, read at
 //! runtime from `prompts_dir`, `{today}` substituted. Editing it never requires
 //! a recompilation, and the apps bundle the same files as assets.
 //!
-//! Since SYN-171 there are TWO prompts, not one: `classifier-note.md` (routing
+//! There are TWO prompts, not one: `classifier-note.md` (routing
 //! + prose) and `classifier-graph.md` (entities, facts, relations, projects).
 //! `classifier.md` is the superseded single-call prompt — kept as the documented
 //! fallback and as the size reference the tests compare against, no longer read
@@ -30,7 +30,7 @@ use crate::embedder::CoreError;
 use crate::routing::Brain;
 use crate::usage::LlmUsage;
 
-/// Which wire dialect the host's chosen model speaks (SYN-126, open provider
+/// Which wire dialect the host's chosen model speaks (open provider
 /// seam). The core stays model-agnostic: it builds ONE Anthropic-shaped request
 /// and reads ONE Anthropic-shaped response; a non-Anthropic provider is
 /// translated at the boundary in [`post_messages`], so every call site
@@ -41,7 +41,7 @@ use crate::usage::LlmUsage;
 ///   Ollama, vLLM, LM Studio, OpenRouter… anyone the user brings their own
 ///   key/endpoint for.
 ///
-/// - `Local` — an on-device runtime (LiteRT/Gemma, SYN-155). NOT a wire format:
+/// - `Local` — an on-device runtime (LiteRT/Gemma). NOT a wire format:
 ///   the host owns the runtime and the core calls INTO it through the
 ///   [`LocalLlm`] backend on [`LlmConfig::local`], bypassing HTTP entirely.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -68,9 +68,9 @@ impl LlmProvider {
     }
 }
 
-/// A host-supplied on-device LLM (SYN-155): the mobile app owns the runtime
+/// A host-supplied on-device LLM: the mobile app owns the runtime
 /// (LiteRT-LM / Gemma) and the core calls INTO it instead of over HTTP. This is
-/// the foreign-backend extension point the provider seam (SYN-150) reserved.
+/// the foreign-backend extension point the provider seam reserved.
 ///
 /// The core hands the already-built, `{today}`-substituted prompt (system + the
 /// user turn); the host applies the model's chat template and returns the raw
@@ -101,7 +101,7 @@ pub struct LlmConfig {
     pub prompts_dir: String,
     /// Injected into the prompt (`{today}`) — Python used module-load date.
     pub today: String,
-    /// The on-device backend, required when `provider == Local` (SYN-155). Kept
+    /// The on-device backend, required when `provider == Local`. Kept
     /// out of `Debug` (a foreign callback has no meaningful repr).
     pub local: Option<std::sync::Arc<dyn LocalLlm>>,
 }
@@ -128,7 +128,7 @@ const ANTHROPIC_VERSION: &str = "2023-06-01";
 const FALLBACK_TYPES: &[&str] =
     &["person", "place", "project", "concept", "organization", "animal", "resource", "tool"];
 
-/// SYN-171 — which half of the classifier a call is running.
+/// Which half of the classifier a call is running.
 ///
 /// The capture used to go through ONE prompt holding every rule at once. Measured
 /// 2026-08-21 on 59 cases: compacting that prompt cost Gemma E2B a THIRD of its
@@ -216,7 +216,7 @@ impl Brain {
             system_blocks.push(json!({"type": "text", "text": active_projects_block(&conn)?}));
         }
         // Who the author is matters to BOTH: the note half needs it to tell a
-        // reported action from the author's own (SYN-182 `atomic_note_owner`),
+        // reported action from the author's own (`atomic_note_owner`),
         // the graph half to resolve "me"/"my" onto the right entity.
         if let Some(owner) = owner_block(&conn)? {
             system_blocks.push(json!({"type": "text", "text": owner}));
@@ -243,7 +243,7 @@ impl Brain {
     ) -> Result<Value, CoreError> {
         let params = self.build_classify_params(content, day_context, config, half)?;
         let body = post_messages(config, &params)?;
-        // SYN-160 — recorded before parsing: the call is billed whether or not
+        // recorded before parsing: the call is billed whether or not
         // its JSON turns out to be usable, so a parse failure must not make the
         // spending disappear from the books.
         {
@@ -255,7 +255,7 @@ impl Brain {
         parse_classify_text(text, content.chars().count(), stop_reason)
     }
 
-    /// Port of `step1_classify`, in TWO independent calls since SYN-171.
+    /// Port of `step1_classify`, in TWO independent calls.
     ///
     /// The note half runs first so a failure costs one call instead of two, but
     /// nothing is threaded from it into the graph half: independence IS the
@@ -283,7 +283,7 @@ impl Brain {
 /// The four collections are forced to arrays even when the graph half omits
 /// them: `route_capture` reads them with `arr()`, and a missing key would read
 /// as "nothing to extract" — indistinguishable from a half that failed to answer.
-/// `obsoleted_facts` (SYN-189) is in that list for a sharper reason: it is the
+/// `obsoleted_facts` is in that list for a sharper reason: it is the
 /// one field whose absence and whose emptiness must mean the SAME thing, since
 /// the alternative reading would be "obsolete everything".
 pub fn merge_halves(note: Value, graph: Value) -> Value {
@@ -306,13 +306,13 @@ pub fn merge_halves(note: Value, graph: Value) -> Value {
     Value::Object(merged)
 }
 
-/// The single LLM chokepoint shared by classify and the T5 summary calls
-/// (SYN-126): dispatch on the provider, but ALWAYS return an Anthropic-shaped
+/// The single LLM chokepoint shared by classify and the T5 summary calls:
+/// dispatch on the provider, but ALWAYS return an Anthropic-shaped
 /// body (`content[0].text` + `stop_reason`) so every caller and the response
 /// helpers ([`response_text`], [`unusable`], [`parse_classify_text`]) are
 /// provider-agnostic. HTTP/network failures are `LlmHttp` (abort-the-run policy).
 pub(crate) fn post_messages(config: &LlmConfig, params: &Value) -> Result<Value, CoreError> {
-    // SYN-171 — the cycle is a classifier, not a writer: sampling buys nothing
+    // the cycle is a classifier, not a writer: sampling buys nothing
     // and costs reproducibility. Left unset, the same capture took different
     // routing branches between two runs, which made every parity measurement
     // argue with itself. A caller that wants sampling can still pass its own.
@@ -335,7 +335,7 @@ pub(crate) fn post_messages(config: &LlmConfig, params: &Value) -> Result<Value,
     }
 }
 
-/// On-device path (SYN-155): flatten the request to system+user text, hand it to
+/// On-device path: flatten the request to system+user text, hand it to
 /// the host's [`LocalLlm`] backend, wrap the reply in the Anthropic shape. No
 /// HTTP. A truncation is the host's concern — we report `end_turn` (the guard
 /// keys off `max_tokens`, which an on-device backend never emits).
@@ -408,8 +408,8 @@ fn post_anthropic(config: &LlmConfig, params: &Value) -> Result<Value, CoreError
 /// POST /v1/chat/completions (OpenAI, Ollama, vLLM, LM Studio, OpenRouter…):
 /// translate the Anthropic-shaped `params` to a chat request, then normalise the
 /// response back to the Anthropic shape. `cache_control` is dropped and
-/// `finish_reason` is mapped to `stop_reason` — the two normalisations SYN-126
-/// flagged (a foreign provider chokes on `cache_control` and never emits
+/// `finish_reason` is mapped to `stop_reason` — the two normalisations measured
+/// on a foreign provider (a foreign provider chokes on `cache_control` and never emits
 /// Anthropic's `stop_reason`, so both must be synthesised at this boundary).
 fn post_openai(config: &LlmConfig, params: &Value) -> Result<Value, CoreError> {
     let base = config
@@ -509,7 +509,7 @@ const EMPTY_RETRIES: usize = 1;
 /// True when a generative response can't be used as-is: no text at all, or
 /// truncated at `max_tokens` (a summary cut mid-sentence is not a summary).
 ///
-/// SYN-124 — measured root cause: reasoning-capable models sometimes spend the
+/// Measured root cause: reasoning-capable models sometimes spend the
 /// whole budget on a thinking block and return `stop_reason = max_tokens` with
 /// an EMPTY body. On Gemma E4B re-summarising an entity, ~1000 chars of
 /// thinking consumed all 300 tokens; the same prompt succeeds on a retry when
@@ -523,7 +523,7 @@ fn unusable(body: &Value, text: &str) -> bool {
 /// (see [`unusable`]). Callers keep the same contract as `response_text` — an
 /// empty string is still possible once the retries are spent, and stays the
 /// caller's problem.
-/// SYN-160 — the tuple is deliberate. Returning the usage forces every call
+/// The tuple is deliberate. Returning the usage forces every call
 /// site to say what it spent and under which operation; a signature that let
 /// callers ignore it would drift back to "we only measure classify", which is
 /// exactly the blind spot the ticket set out to remove. A retried call bills
@@ -848,7 +848,7 @@ mod tests {
         ));
     }
 
-    // ── SYN-150: OpenAI-compatible provider normalisation ────────────────
+    // ── OpenAI-compatible provider normalisation ─────────────────────────
     const OA_FILLED: &str =
         r#"{"choices":[{"message":{"content":"une fiche"},"finish_reason":"stop"}]}"#;
     /// finish_reason=length → the OpenAI spelling of Anthropic's max_tokens.
@@ -892,7 +892,7 @@ mod tests {
         assert_eq!(rx.iter().count(), 2);
     }
 
-    // ── SYN-155: on-device (Local) backend ───────────────────────────────
+    // ── on-device (Local) backend ────────────────────────────────────────
     /// Records what the core flattened, echoes a canned reply — stands in for
     /// the Kotlin LiteRT backend without a device.
     struct StubLocal {

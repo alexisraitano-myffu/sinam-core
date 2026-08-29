@@ -20,7 +20,7 @@ pub(crate) fn init_schema(conn: &Connection) -> Result<(), rusqlite::Error> {
     );
 
     let creates: &[&str] = &[
-        // SYN-112: uuid TEXT pks everywhere — auto-increment ids cannot give
+        // uuid TEXT pks everywhere — auto-increment ids cannot give
         // rows a cross-device identity. inbox.id doubles as the capture's
         // client uuid when one is provided (idempotency moves onto the pk).
         "CREATE TABLE IF NOT EXISTS inbox (
@@ -135,7 +135,7 @@ pub(crate) fn init_schema(conn: &Connection) -> Result<(), rusqlite::Error> {
             trigger           TEXT DEFAULT 'manual',
             error             TEXT
         )",
-        // ── SYN-41 — Projects as aggregate entities ─────────────────────────
+        // ── Projects as aggregate entities ──────────────────────────────────
         "CREATE TABLE IF NOT EXISTS project_entries (
             id                TEXT PRIMARY KEY,
             project_id        TEXT NOT NULL REFERENCES entities(id),
@@ -158,7 +158,7 @@ pub(crate) fn init_schema(conn: &Connection) -> Result<(), rusqlite::Error> {
             updated_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             entry_count_at_sync INTEGER DEFAULT 0
         )",
-        // ── SYN-39 — Entity merge proposals (absorbed row stays, soft link) ─
+        // ── Entity merge proposals (absorbed row stays, soft link) ─
         "CREATE TABLE IF NOT EXISTS entity_merge_proposals (
             id                    TEXT PRIMARY KEY,
             candidate_entity_id   TEXT NOT NULL REFERENCES entities(id),
@@ -171,7 +171,7 @@ pub(crate) fn init_schema(conn: &Connection) -> Result<(), rusqlite::Error> {
             resolved_at           TIMESTAMP,
             resolved_canonical_id TEXT REFERENCES entities(id)
         )",
-        // ── SYN-190 — Predicate reconciliation queue ────────────────────────
+        // ── Predicate reconciliation queue ──────────────────────────────────
         // Entity types are a closed vocabulary, so they are governed by a list.
         // Predicates are open by nature — a fact can be of a genuinely new kind —
         // so they are governed AFTER the fact instead: a predicate seen for the
@@ -191,7 +191,7 @@ pub(crate) fn init_schema(conn: &Connection) -> Result<(), rusqlite::Error> {
             resolved_at         TIMESTAMP,
             resolved_predicate  TEXT
         )",
-        // ── SYN-189 — Fact negation, when the target is not certain ─────────
+        // ── Fact negation, when the target is not certain ───────────────────
         // A negation whose target is unambiguous is applied on the spot: the
         // fact is obsoleted, and `POST /fact/{id}/restore` undoes it. This
         // table holds the rest — several facts could be the one meant, the
@@ -211,7 +211,7 @@ pub(crate) fn init_schema(conn: &Connection) -> Result<(), rusqlite::Error> {
             resolved_at         TIMESTAMP,
             resolved_fact_id    TEXT
         )",
-        // ── SYN-188 — Entity rename, declared in a capture ──────────────────
+        // ── Entity rename, declared in a capture ────────────────────────────
         // The canonical name is what titles the fiche, what the digest prints
         // and what search returns: it is the name the user reads as being their
         // own memory. So a capture PROPOSES a rename and a human applies it,
@@ -277,7 +277,7 @@ pub(crate) fn init_schema(conn: &Connection) -> Result<(), rusqlite::Error> {
             resolved_at         TIMESTAMP,
             resolved_note_id    TEXT
         )",
-        // ── SYN-58 — Live entity-type vocabulary + proposals ────────────────
+        // ── Live entity-type vocabulary + proposals ─────────────────────────
         "CREATE TABLE IF NOT EXISTS active_entity_types (
             type        TEXT PRIMARY KEY,
             source      TEXT NOT NULL,
@@ -305,20 +305,20 @@ pub(crate) fn init_schema(conn: &Connection) -> Result<(), rusqlite::Error> {
             created_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             resolved_at      TIMESTAMP
         )",
-        // SYN-69 — persisted map positions (projection cache, never authoritative).
+        // persisted map positions (projection cache, never authoritative).
         "CREATE TABLE IF NOT EXISTS node_positions (
             node_id    TEXT PRIMARY KEY,
             x          REAL NOT NULL,
             y          REAL NOT NULL,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )",
-        // SYN-70 — cached cluster labels, keyed by defining-entities signature.
+        // cached cluster labels, keyed by defining-entities signature.
         "CREATE TABLE IF NOT EXISTS cluster_labels (
             signature  TEXT PRIMARY KEY,
             label      TEXT NOT NULL,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )",
-        // SYN-112 (T3) — the replicated cycle owner-lock: the ONE device
+        // The replicated cycle owner-lock: the ONE device
         // allowed to run the Dream Cycle. Singleton row (id = 'owner'); a
         // claim bumps epoch, concurrent claims are settled by the sync
         // engine's per-column LWW (one claim = one HLC for all columns).
@@ -328,7 +328,7 @@ pub(crate) fn init_schema(conn: &Connection) -> Result<(), rusqlite::Error> {
             epoch      INTEGER NOT NULL DEFAULT 1,
             claimed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )",
-        // SYN-127 — the user's memory space: replicated singleton (row id
+        // the user's memory space: replicated singleton (row id
         // 'space'), created by the OWNER device only when missing (a fresh
         // replica must never self-create one: its newer HLC would win the
         // LWW merge and overwrite the mesh's space on bootstrap).
@@ -338,7 +338,7 @@ pub(crate) fn init_schema(conn: &Connection) -> Result<(), rusqlite::Error> {
             name       TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )",
-        // SYN-127 — one row per device in the mesh (replicated): what the
+        // one row per device in the mesh (replicated): what the
         // Settings « Appareils » screen lists. Each device upserts its OWN
         // row (pk = its sync device_id) so rows never conflict across peers.
         "CREATE TABLE IF NOT EXISTS devices (
@@ -348,7 +348,7 @@ pub(crate) fn init_schema(conn: &Connection) -> Result<(), rusqlite::Error> {
             last_seen  TIMESTAMP,
             revoked_at TIMESTAMP
         )",
-        // SYN-160 — one row per LLM call. The four token buckets stay
+        // one row per LLM call. The four token buckets stay
         // separate because they are priced differently (a cache write costs
         // more than plain input, a cache read a tenth): collapsing them here
         // would throw away the only thing that makes a price computable later.
@@ -375,7 +375,7 @@ pub(crate) fn init_schema(conn: &Connection) -> Result<(), rusqlite::Error> {
     }
     conn.execute(&vec_table, [])?;
 
-    // SYN-58: seed the live vocabulary with the built-in types.
+    // seed the live vocabulary with the built-in types.
     //
     // `resource` est semé et NON proposé : le passer par la file des types
     // ferait demander « créer un type resource ? » au premier lien capturé,
@@ -394,12 +394,12 @@ pub(crate) fn init_schema(conn: &Connection) -> Result<(), rusqlite::Error> {
     // Best-effort column migrations, in the same order Python applied them.
     let alters: &[&str] = &[
         "ALTER TABLE inbox ADD COLUMN processed_at TIMESTAMP",
-        // Episodic-memory columns (decay = Ebbinghaus, SYN-19).
+        // Episodic-memory columns (decay = Ebbinghaus).
         "ALTER TABLE atomic_notes ADD COLUMN summary TEXT",
         "ALTER TABLE atomic_notes ADD COLUMN entities_mentioned TEXT DEFAULT '[]'",
         "ALTER TABLE atomic_notes ADD COLUMN memory_strength REAL DEFAULT 1.0",
         "ALTER TABLE atomic_notes ADD COLUMN last_reactivated_at TIMESTAMP",
-        // SYN-21 — real resource pipeline (fetch + summary).
+        // real resource pipeline (fetch + summary).
         "ALTER TABLE resources ADD COLUMN url        TEXT",
         "ALTER TABLE resources ADD COLUMN content    TEXT",
         "ALTER TABLE resources ADD COLUMN fetched_at TIMESTAMP",
@@ -420,32 +420,32 @@ pub(crate) fn init_schema(conn: &Connection) -> Result<(), rusqlite::Error> {
         "ALTER TABLE inbox ADD COLUMN device_id TEXT",
         "ALTER TABLE inbox ADD COLUMN captured_at TIMESTAMP",
         "ALTER TABLE inbox ADD COLUMN status TEXT DEFAULT 'queued'",
-        // SYN-41 — provenance back-link to the immutable inbox row.
+        // provenance back-link to the immutable inbox row.
         "ALTER TABLE entities     ADD COLUMN provenance_capture_id TEXT REFERENCES inbox(id)",
         "ALTER TABLE facts        ADD COLUMN provenance_capture_id TEXT REFERENCES inbox(id)",
         "ALTER TABLE atomic_notes ADD COLUMN provenance_capture_id TEXT REFERENCES inbox(id)",
         "ALTER TABLE relations    ADD COLUMN provenance_capture_id TEXT REFERENCES inbox(id)",
-        // SYN-44 — append vs from-scratch rebuild on project_state_versions.
+        // append vs from-scratch rebuild on project_state_versions.
         "ALTER TABLE project_state_versions ADD COLUMN kind TEXT NOT NULL DEFAULT 'append'",
-        // SYN-39 — soft-link a merged entity to its absorber.
+        // soft-link a merged entity to its absorber.
         "ALTER TABLE entities ADD COLUMN merged_into_id TEXT REFERENCES entities(id)",
         "ALTER TABLE entities ADD COLUMN merged_at TIMESTAMP",
-        // SYN-58 — entity lifecycle status (active | pending | archived).
+        // entity lifecycle status (active | pending | archived).
         "ALTER TABLE entities ADD COLUMN status TEXT NOT NULL DEFAULT 'active'",
-        // SYN-37 + SYN-59 — fact/entity lifecycle (archived / obsoleted).
+        // fact/entity lifecycle (archived / obsoleted).
         "ALTER TABLE facts    ADD COLUMN archived_at  TIMESTAMP",
         "ALTER TABLE facts    ADD COLUMN obsoleted_at TIMESTAMP",
         "ALTER TABLE facts    ADD COLUMN obsoleted_by TEXT REFERENCES facts(id)",
         "ALTER TABLE entities ADD COLUMN archived_at  TIMESTAMP",
-        // SYN-68 — entity memory_strength for the living map.
+        // entity memory_strength for the living map.
         "ALTER TABLE entities ADD COLUMN memory_strength REAL DEFAULT 1.0",
-        // SYN-77 — keep the failure reason on the inbox row.
+        // keep the failure reason on the inbox row.
         "ALTER TABLE inbox ADD COLUMN error TEXT",
-        // SYN-88 — fact category (identity | dates | work | ...).
+        // fact category (identity | dates | work | ...).
         "ALTER TABLE facts ADD COLUMN category TEXT",
-        // SYN-89 — re-résumé flag, set whenever a fact of the entity changes.
+        // re-résumé flag, set whenever a fact of the entity changes.
         "ALTER TABLE entities ADD COLUMN summary_stale INTEGER NOT NULL DEFAULT 0",
-        // SYN-85 — note kinds (note | task | event) + user archive gesture.
+        // note kinds (note | task | event) + user archive gesture.
         "ALTER TABLE atomic_notes ADD COLUMN kind TEXT NOT NULL DEFAULT 'note'",
         "ALTER TABLE atomic_notes ADD COLUMN event_date TIMESTAMP",
         "ALTER TABLE atomic_notes ADD COLUMN event_recurring INTEGER NOT NULL DEFAULT 0",
@@ -454,17 +454,17 @@ pub(crate) fn init_schema(conn: &Connection) -> Result<(), rusqlite::Error> {
         "ALTER TABLE atomic_notes ADD COLUMN review_status TEXT NOT NULL DEFAULT 'confirmed'",
         // Relations join the same confidence gate.
         "ALTER TABLE relations ADD COLUMN review_status TEXT NOT NULL DEFAULT 'confirmed'",
-        // SYN-119 — capture language (ISO 639-1), nullable. Detected server-side by
+        // capture language (ISO 639-1), nullable. Detected server-side by
         // the classifier; drives content-language entity summaries + weekly digest.
         "ALTER TABLE atomic_notes ADD COLUMN language TEXT",
-        // SYN-182 — who owes the action. NULL = the author, which is every row
+        // who owes the action. NULL = the author, which is every row
         // written before this column existed. A named owner comes from reported
         // speech ("Marie told me she had to call the dentist") and is what keeps
         // the task off the author's own lists while staying on Marie's fiche.
         // Deliberately a name, not a user id: this is not multi-account, it is
         // one field so the prompt's promise stops being unrepresentable.
         "ALTER TABLE atomic_notes ADD COLUMN owner TEXT",
-        // SYN-182 — why the row is « À valider ». The queue used to carry one
+        // why the row is « À valider ». The queue used to carry one
         // meaning ("I might lose this"); extending it to notes and episodes adds
         // a second ("I am not sure this deserves to exist"). Two meanings in one
         // queue is the real cost, so the reason is named and the UI can ask the

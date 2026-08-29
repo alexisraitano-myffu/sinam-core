@@ -1,6 +1,6 @@
-//! T5 (SYN-114) — the LLM summary passes, ported from `dream_cycle/cycle.py`:
-//! entity re-summary (SYN-89) and the living project synthesis (SYN-43, with
-//! the SYN-44 "garbage collector" refinement). Prompts are DATA in
+//! T5 — the LLM summary passes, ported from `dream_cycle/cycle.py`:
+//! entity re-summary and the living project synthesis (with
+//! the "garbage collector" refinement). Prompts are DATA in
 //! `prompts_dir` (`resummary.md`, `project-summary.md`,
 //! `project-refinement.md`), byte-identical to the historical Python
 //! constants; the HTTP path is the classifier's (`llm::post_messages`).
@@ -16,7 +16,7 @@ use crate::routing::{
     ProjectSynthesis,
 };
 
-/// SYN-119 — majority language (ISO 639-1) across the atomic_notes that mention this
+/// Majority language (ISO 639-1) across the atomic_notes that mention this
 /// entity, or None when no mentioning note carries a detected language. `entities_mentioned`
 /// is a JSON array of canonical names; we match the quoted name (LIKE wildcards escaped).
 /// This is the deterministic "content language" of an entity — facts/relations alone carry
@@ -56,7 +56,7 @@ fn strip_fences(text: &str) -> String {
         .to_string()
 }
 
-/// SYN-44 — new entries since the last refinement before a from-scratch pass.
+/// New entries since the last refinement before a from-scratch pass.
 fn refinement_threshold() -> i64 {
     std::env::var("SYNAPSE_REFINEMENT_THRESHOLD")
         .ok()
@@ -75,7 +75,7 @@ fn scalar_str(v: &Value) -> String {
 }
 
 impl Brain {
-    /// SYN-89 — regenerate entity summaries from scratch (derived, never
+    /// Regenerate entity summaries from scratch (derived, never
     /// edited). Targets = `touched_ids` + entities flagged `summary_stale`.
     /// Rebuilt from ACTIVE facts + non-pending relations only. Returns the
     /// regenerated ids (to re-vectorize). An HTTP failure stops the pass —
@@ -161,7 +161,7 @@ impl Brain {
                 }
             }
 
-            // SYN-119 — content-language summary. Prefer the deterministic majority
+            // content-language summary. Prefer the deterministic majority
             // language stored on the entity's source notes; fall back to letting the
             // model infer from the material when no note carries a language (facts /
             // relations are mostly interlingua, so inference alone is unreliable).
@@ -178,7 +178,7 @@ impl Brain {
 
             let params_json = json!({
                 "model": config.model,
-                // SYN-124 — budget = sortie + marge pour un bloc de raisonnement. Un modèle
+                // budget = sortie + marge pour un bloc de raisonnement. Un modèle
                 // qui « pense » dépense d'abord son budget en thinking : dimensionné pour la
                 // seule sortie, il rend une réponse vide tronquée à max_tokens (cas mesuré sur
                 // Gemma E4B). max_tokens est un plafond, pas une cible : relever ne coûte rien
@@ -189,7 +189,7 @@ impl Brain {
             });
             let summary = match post_messages_text(config, &params_json) {
                 Ok((t, used)) => {
-                    // SYN-160 — la re-résumé est la passe la plus répétée du
+                    // la re-résumé est la passe la plus répétée du
                     // cycle : la compter est ce qui distingue le coût réel du
                     // coût de la seule classification.
                     crate::usage::record(&conn, config, crate::usage::Op::Resummarize, used);
@@ -212,8 +212,8 @@ impl Brain {
         Ok(regenerated)
     }
 
-    /// SYN-43 — amend (or create) a project's live synthesis after a new
-    /// entry, then trigger the SYN-44 from-scratch refinement once enough
+    /// Amend (or create) a project's live synthesis after a new
+    /// entry, then trigger the from-scratch refinement once enough
     /// entries accumulated. Failures never block the cycle (the entry is
     /// already persisted; the synthesis catches up on the next one).
     pub fn synthesize_project(
@@ -275,7 +275,7 @@ impl Brain {
     }
 }
 
-/// SYN-134 — the project's ACTIVE facts (durable literal data: totals,
+/// The project's ACTIVE facts (durable literal data: totals,
 /// budget, choices) as a prompt block for the living synthesis. None when
 /// the project carries no facts, so the historical prompt shape is
 /// untouched for every project that predates project facts.
@@ -330,7 +330,7 @@ fn append_project_summary(
         .and_then(Value::as_str)
         .map(String::from);
 
-    // SYN-134 — the project's active facts ride along so the living
+    // the project's active facts ride along so the living
     // synthesis reflects the durable data, not just the entry timeline.
     let facts_block = project_facts_block(conn, project_id)?
         .map(|b| format!("\n\n{b}"))
@@ -349,7 +349,7 @@ fn append_project_summary(
 
     let params_json = json!({
         "model": config.model,
-        // SYN-124 — ~500 mots demandés + marge de raisonnement, cf. resummarize.
+        // ~500 mots demandés + marge de raisonnement, cf. resummarize.
         "max_tokens": 2048,
         "system": [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
         "messages": [{"role": "user", "content": user_msg}],
@@ -389,7 +389,7 @@ fn append_project_summary(
         )?;
     }
 
-    // SYN-44: from-scratch refinement once enough new entries accumulated.
+    // from-scratch refinement once enough new entries accumulated.
     let last_count: i64 = conn
         .query_row(
             "SELECT MAX(entry_count) FROM project_state_versions \
@@ -406,7 +406,7 @@ fn append_project_summary(
 }
 
 /// Port of `_refine_project_summary` — rebuild the synthesis from-scratch
-/// from every entry (SYN-44 "garbage collector"). LLM failure → `Ok(None)`.
+/// from every entry ("garbage collector"). LLM failure → `Ok(None)`.
 fn refine_project_summary(
     conn: &Connection,
     config: &LlmConfig,
@@ -435,7 +435,7 @@ fn refine_project_summary(
         })
         .collect::<Vec<_>>()
         .join("\n\n");
-    // SYN-134 — same durable-facts block as the append pass.
+    // same durable-facts block as the append pass.
     let facts_block = project_facts_block(conn, project_id)?
         .map(|b| format!("\n\n{b}"))
         .unwrap_or_default();
@@ -447,7 +447,7 @@ fn refine_project_summary(
 
     let params_json = json!({
         "model": config.model,
-        // SYN-124 — 500-800 mots demandés + marge de raisonnement, cf. resummarize.
+        // 500-800 mots demandés + marge de raisonnement, cf. resummarize.
         "max_tokens": 3072,
         "system": [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
         "messages": [{"role": "user", "content": user_msg}],
@@ -520,7 +520,7 @@ mod tests {
         assert_eq!(refinement_threshold(), 20);
     }
 
-    // SYN-119 — the entity's "content language" is the majority `language` of the
+    // the entity's "content language" is the majority `language` of the
     // atomic_notes that mention it (deterministic; injected into resummary.md). Also
     // proves the atomic_notes.language column exists (the INSERT would fail otherwise).
     #[test]

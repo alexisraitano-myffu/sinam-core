@@ -30,7 +30,7 @@ impl From<sinam_core::CoreError> for CoreError {
     }
 }
 
-/// Reverse conversion (SYN-155): a foreign on-device backend raises the FFI
+/// Reverse conversion: a foreign on-device backend raises the FFI
 /// `CoreError`; the core's `LocalLlm` trait speaks `sinam_core::CoreError`.
 impl From<CoreError> for sinam_core::CoreError {
     fn from(e: CoreError) -> Self {
@@ -69,7 +69,7 @@ impl Embedder {
         Ok(self.inner.embed(&text)?)
     }
 
-    /// One vector per ~128-token window (SYN-118); short text = one vector.
+    /// One vector per ~128-token window; short text = one vector.
     pub fn embed_chunks(&self, text: String) -> Result<Vec<Vec<f32>>, CoreError> {
         Ok(self.inner.embed_chunks(&text)?)
     }
@@ -101,7 +101,7 @@ pub struct ResourceHit {
     pub score: f64,
 }
 
-/// Storage substrate (SYN-110 / T1): schema ownership + vector reads/writes.
+/// Storage substrate: schema ownership + vector reads/writes.
 /// Embedding blobs are the sqlite-vec serialized float32 format (what
 /// `Embedder.embed` yields once packed little-endian).
 #[derive(uniffi::Object)]
@@ -122,7 +122,7 @@ impl Storage {
         Ok(self.inner.upsert_note_vector(&note_id, &embedding)?)
     }
 
-    /// Chunked upsert (SYN-118): chunk 0 keyed by the note uuid, then `uuid#k`.
+    /// Chunked upsert: chunk 0 keyed by the note uuid, then `uuid#k`.
     pub fn upsert_note_vectors(
         &self,
         note_id: String,
@@ -208,7 +208,7 @@ impl Storage {
             .collect())
     }
 
-    // ── P2P sync (SYN-112/SYN-113): engine surface for the mobile transport ──
+    // ── P2P sync: engine surface for the mobile transport ──
 
     pub fn sync_device_id(&self) -> Result<String, CoreError> {
         Ok(self.inner.sync_device_id()?)
@@ -226,7 +226,7 @@ impl Storage {
         Ok(self.inner.sync_apply(&changes_json)?)
     }
 
-    /// SYN-133 — post-pull twin dedup (collapse on the smallest uuid,
+    /// Post-pull twin dedup (collapse on the smallest uuid,
     /// tombstones journaled, doomed notes' vectors swept) → JSON report.
     pub fn dedup_after_pull(&self) -> Result<String, CoreError> {
         Ok(self.inner.dedup_after_pull()?)
@@ -285,10 +285,10 @@ pub struct LlmSettings {
     pub today: String,
     pub base_url: Option<String>,
     pub fuel_token: Option<String>,
-    /// SYN-150 wire dialect: "anthropic" (default) or "openai" — unset keeps
+    /// Wire dialect: "anthropic" (default) or "openai" — unset keeps
     /// Anthropic, so an existing host that never sets it is unchanged. The
     /// UniFFI default lets the current Kotlin/Swift call sites compile untouched
-    /// until SYN-152 wires the selector.
+    /// until the provider selector is wired.
     #[uniffi(default = None)]
     pub provider: Option<String>,
 }
@@ -303,14 +303,14 @@ impl From<LlmSettings> for sinam_core::LlmConfig {
             fuel_token: s.fuel_token,
             prompts_dir: s.prompts_dir,
             today: s.today,
-            // The on-device backend (SYN-155) can't live in a plain Record; it
+            // The on-device backend can't live in a plain Record; it
             // is set once on the Brain and injected by `Brain::llm_config`.
             local: None,
         }
     }
 }
 
-/// SYN-155 — the host's on-device LLM (LiteRT/Gemma), implemented in Kotlin/Swift
+/// The host's on-device LLM (LiteRT/Gemma), implemented in Kotlin/Swift
 /// and passed into the core as a foreign object. The mobile app owns the runtime;
 /// the core calls `generate` synchronously on its worker thread when the chosen
 /// provider is `local`.
@@ -368,19 +368,19 @@ impl SqlConnection {
         Ok(self.inner.last_insert_rowid()?)
     }
 
-    /// SYN-132 — one-call read snapshot for the app's local replica: the same
+    /// One-call read snapshot for the app's local replica: the same
     /// JSON shapes as the desktop backend's read endpoints, served from this
     /// local core db.
     pub fn read_snapshot(&self) -> Result<String, CoreError> {
         Ok(self.inner.read_snapshot()?.to_string())
     }
 
-    /// SYN-132 — reverse provenance of one capture (`/capture/{id}/generated`).
+    /// Reverse provenance of one capture (`/capture/{id}/generated`).
     pub fn generated_for_capture(&self, capture_id: String) -> Result<String, CoreError> {
         Ok(self.inner.generated_for_capture(&capture_id)?.to_string())
     }
 
-    /// SYN-160 — consumption of `month` (`YYYY-MM`) as JSON: tokens per
+    /// Consumption of `month` (`YYYY-MM`) as JSON: tokens per
     /// operation and model, captures processed, and how many days carry data
     /// (the host needs that last one to decide whether a projection means
     /// anything). No price: converting to money is host policy.
@@ -388,7 +388,7 @@ impl SqlConnection {
         Ok(self.inner.usage_summary(&month)?.to_string())
     }
 
-    /// SYN-135 — apply one app action-log entry (validate/archive/rename/
+    /// Apply one app action-log entry (validate/archive/rename/
     /// relation CRUD/merge accept/…) to this local db, mirroring the desktop
     /// backend's write endpoints. Own IMMEDIATE transaction; returns the
     /// outcome JSON (`status` = ok/confirmed/accepted/… or not_found/skipped
@@ -404,16 +404,16 @@ impl SqlConnection {
             .to_string())
     }
 
-    // ── Full-cycle passes (SYN-130): the mobile host runs the same Dream
+    // ── Full-cycle passes: the mobile host runs the same Dream
     // Cycle as the desktop backend, so the T5 surface crosses the FFI too. ──
 
-    /// SYN-19 decay pass over atomic_notes; `now` = optional fixed clock
+    /// Decay pass over atomic_notes; `now` = optional fixed clock
     /// 'YYYY-MM-DD HH:MM:SS' (tests inject it), None = system now.
     pub fn apply_decay(&self, tau_days: Option<f64>, now: Option<String>) -> Result<i64, CoreError> {
         Ok(self.inner.apply_decay(tau_days, now.as_deref())?)
     }
 
-    /// SYN-68 decay pass over entities (anchor `last_mentioned`).
+    /// Decay pass over entities (anchor `last_mentioned`).
     pub fn apply_entity_decay(
         &self,
         tau_days: Option<f64>,
@@ -444,19 +444,19 @@ impl SqlConnection {
             .reactivate_notes_for_entities(&entity_names, now.as_deref())?)
     }
 
-    /// SYN-23 — the digest's structured week as JSON (pure SQL on THIS
+    /// The digest's structured week as JSON (pure SQL on THIS
     /// connection, offline). `now` = optional fixed clock 'YYYY-MM-DD HH:MM:SS'.
     pub fn gather_week(&self, now: Option<String>, days: i64) -> Result<String, CoreError> {
         Ok(self.inner.gather_week(now.as_deref(), days)?.to_string())
     }
 }
 
-// ── Pairing channel (SYN-128): authenticated secret transfer at join time ──
+// ── Pairing channel: authenticated secret transfer at join time ──
 
 /// Scanner-side result of accepting a QR offer: send `accept_pub` back to the
 /// offerer over the transport; keep `channel_key` to open the sealed payload.
 /// `offer_pub` (from the QR) rides along because `pairing_open` needs it as
-/// AAD — the joiner shouldn't have to re-parse the QR format (SYN-128).
+/// AAD — the joiner shouldn't have to re-parse the QR format.
 #[derive(uniffi::Record)]
 pub struct PairingAccept {
     pub accept_pub: Vec<u8>,
@@ -464,7 +464,7 @@ pub struct PairingAccept {
     pub offer_pub: Vec<u8>,
 }
 
-/// Pairing offerer session (SYN-128): the device that SHOWS the QR keeps this
+/// Pairing offerer session: the device that SHOWS the QR keeps this
 /// between showing the offer and receiving the scanner's returned key.
 #[derive(uniffi::Object)]
 pub struct PairingSession {
@@ -500,7 +500,7 @@ impl PairingSession {
     }
 }
 
-/// Scanner side (SYN-128): decode the QR and derive the channel key.
+/// Scanner side: decode the QR and derive the channel key.
 #[uniffi::export]
 pub fn pairing_accept(qr: String) -> Result<PairingAccept, CoreError> {
     let offer = sinam_core::PairingOffer::decode(&qr)?;
@@ -519,7 +519,7 @@ pub fn pairing_offer_addrs(qr: String) -> Result<Vec<String>, CoreError> {
     Ok(sinam_core::PairingOffer::decode(&qr)?.addrs)
 }
 
-/// AEAD-seal a payload under the channel key (SYN-128). Returns base64.
+/// AEAD-seal a payload under the channel key. Returns base64.
 #[uniffi::export]
 pub fn pairing_seal(
     channel_key: Vec<u8>,
@@ -533,7 +533,7 @@ pub fn pairing_seal(
     Ok(sinam_core::pairing_seal(&ck, &op, &ap, &plaintext)?)
 }
 
-/// Open what `pairing_seal` produced (SYN-128) → the plaintext bytes.
+/// Open what `pairing_seal` produced → the plaintext bytes.
 #[uniffi::export]
 pub fn pairing_open(
     channel_key: Vec<u8>,
@@ -553,18 +553,18 @@ fn key32(bytes: &[u8], what: &str) -> Result<[u8; 32], CoreError> {
     })
 }
 
-/// The Dream Cycle brain (SYN-111): deterministic routing + classifier
+/// The Dream Cycle brain: deterministic routing + classifier
 /// orchestration. JSON strings across the boundary, same shapes as PyO3.
 #[derive(uniffi::Object)]
 pub struct Brain {
     inner: sinam_core::Brain,
-    /// SYN-155 — the on-device backend, set once by the host after `open`. Read
+    /// The on-device backend, set once by the host after `open`. Read
     /// on every LLM call and injected into the LlmConfig when provider=local.
     local_llm: std::sync::RwLock<Option<Arc<dyn LocalLlmCallback>>>,
 }
 
 impl Brain {
-    /// LlmSettings → LlmConfig with the on-device backend injected (SYN-155), so
+    /// LlmSettings → LlmConfig with the on-device backend injected, so
     /// a `provider="local"` cycle call reaches the host runtime.
     fn llm_config(&self, s: LlmSettings) -> sinam_core::LlmConfig {
         let mut config: sinam_core::LlmConfig = s.into();
@@ -593,7 +593,7 @@ impl Brain {
         }))
     }
 
-    /// SYN-155 — register (or clear) the host's on-device LLM. Once set, any
+    /// Register (or clear) the host's on-device LLM. Once set, any
     /// cycle call whose LlmSettings selects `provider="local"` runs on-device.
     pub fn set_local_llm(&self, backend: Option<Arc<dyn LocalLlmCallback>>) {
         *self.local_llm.write().unwrap() = backend;
@@ -630,15 +630,15 @@ impl Brain {
         Ok(self.inner.embed_text(&text)?)
     }
 
-    /// Chunked variant (SYN-118): one vector per ~128-token window, feeding
+    /// Chunked variant: one vector per ~128-token window, feeding
     /// `Storage.upsert_note_vectors` so mobile re-embeds match the desktop.
     pub fn embed_chunks(&self, text: String) -> Result<Vec<Vec<f32>>, CoreError> {
         Ok(self.inner.embed_text_chunks(&text)?)
     }
 
-    // ── Full-cycle passes (SYN-130): total parity with the desktop host. ──
+    // ── Full-cycle passes: total parity with the desktop host. ──
 
-    /// SYN-89 re-summary pass (T5): entities touched by the run + stale ones,
+    /// Re-summary pass (T5): entities touched by the run + stale ones,
     /// summaries rebuilt from active facts/relations via the LLM. Returns the
     /// regenerated entity ids as a JSON array. An HTTP failure stops the pass
     /// silently (stale flags survive).
@@ -651,7 +651,7 @@ impl Brain {
         Ok(serde_json::Value::from(ids).to_string())
     }
 
-    /// SYN-43/44 living project synthesis (T5): append + threshold-triggered
+    /// Living project synthesis (T5): append + threshold-triggered
     /// refinement. Returns the new summary_md or None (failures never block).
     pub fn synthesize_project(
         &self,
@@ -676,7 +676,7 @@ impl Brain {
         Ok(self.inner.vectorize_entities(&entity_ids)?)
     }
 
-    /// SYN-23 — render the gathered week (JSON string) into the digest
+    /// Render the gathered week (JSON string) into the digest
     /// markdown (prompt = data `digest.md`, LLM via the core HTTP path).
     pub fn summarize_digest(
         &self,
@@ -688,7 +688,7 @@ impl Brain {
         Ok(self.inner.summarize_digest(&week, &self.llm_config(config))?)
     }
 
-    /// SYN-23 — store the digest note (idempotent per ISO week) + its vector,
+    /// Store the digest note (idempotent per ISO week) + its vector,
     /// on the Brain's OWN connection: call outside host transactions. Returns
     /// the note id.
     pub fn write_digest_note(
@@ -701,7 +701,7 @@ impl Brain {
         Ok(self.inner.write_digest_note(&week, &markdown)?)
     }
 
-    /// SYN-21 — process every URL found in a capture (each independent, one
+    /// Process every URL found in a capture (each independent, one
     /// failure never blocks the others). `config = None` → snippet-fallback
     /// summaries (no LLM). Returns the stored resource ids as a JSON array.
     pub fn process_capture_resources(
@@ -735,7 +735,7 @@ impl Brain {
         today: String,
         base_url: Option<String>,
         fuel_token: Option<String>,
-        // SYN-152 — wire dialect for the classify step. None keeps the
+        // wire dialect for the classify step. None keeps the
         // Anthropic behaviour (what iOS passes today).
         provider: Option<String>,
     ) -> Result<String, CoreError> {
@@ -747,7 +747,7 @@ impl Brain {
             fuel_token,
             prompts_dir,
             today,
-            // SYN-155 — on-device classify uses the registered backend (if any).
+            // on-device classify uses the registered backend (if any).
             local: self.local_backend(),
         };
         Ok(self

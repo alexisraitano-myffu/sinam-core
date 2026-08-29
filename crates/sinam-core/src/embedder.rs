@@ -11,7 +11,7 @@ pub const EMBEDDING_DIM: usize = 384;
 /// Truncation fallback when the tokenizer config carries no usable value.
 const DEFAULT_MAX_LENGTH: usize = 512;
 
-// ── Chunked embedding (SYN-118) ──────────────────────────────────────────
+// ── Chunked embedding ────────────────────────────────────────────────────
 // The qdrant export truncates at 128 tokens, and that is the RIGHT granule:
 // this is a sentence model — mean-pooling a 460-token digest into one vector
 // dilutes every section (measured: tail queries 0.31→0.22 when embedding the
@@ -130,8 +130,8 @@ impl Embedder {
         })
     }
 
-    /// Embed a text as one L2-normalized vector per ~`max_tokens` window
-    /// (SYN-118). A text that fits in one window returns a single vector,
+    /// Embed a text as one L2-normalized vector per ~`max_tokens` window.
+    /// A text that fits in one window returns a single vector,
     /// embedded from the ORIGINAL string (bit-identical to `embed`); longer
     /// texts are windowed on token ids with `CHUNK_OVERLAP_TOKENS` overlap,
     /// each window decoded back to text and embedded. At most `MAX_CHUNKS`
@@ -245,7 +245,7 @@ mod tests {
         assert!((norm - 1.0).abs() < 1e-4, "norm was {norm}");
     }
 
-    // SYN-118 — chunked embedding of long texts.
+    // chunked embedding of long texts.
     #[test]
     fn embed_chunks_windows_long_text_and_matches_embed_for_short() {
         let Some(dir) = model_dir() else {

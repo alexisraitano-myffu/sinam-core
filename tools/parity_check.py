@@ -3,7 +3,7 @@ Vector parity harness: Rust core (sinam_core, PyO3) vs Python fastembed.
 
 Both sides must load the SAME model files (qdrant paraphrase-multilingual-
 MiniLM-L12-v2-onnx-Q) and produce the same L2-normalized 384-d vector for the
-same text, within epsilon. This is the T0 acceptance gate (SYN-109).
+same text, within epsilon. This is the T0 acceptance gate.
 
 Usage (from the synapse backend venv, which has fastembed):
     python tools/parity_check.py --model-dir ~/.synapse/models/paraphrase-multilingual-MiniLM-L12-v2-onnx-Q

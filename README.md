@@ -13,11 +13,11 @@ Everything the "Dream Cycle" does lives here as Rust modules in `crates/sinam-co
 
 | Module | Responsibility |
 | -- | -- |
-| `embedder.rs` | Local ONNX embeddings (fastembed, `paraphrase-multilingual-MiniLM-L12-v2`, 384-d, L2-normalized). Long text is **chunked** into ~128-token windows, one vector per window, best chunk wins (SYN-118) |
+| `embedder.rs` | Local ONNX embeddings (fastembed, `paraphrase-multilingual-MiniLM-L12-v2`, 384-d, L2-normalized). Long text is **chunked** into ~128-token windows, one vector per window, best chunk wins |
 | `storage.rs` · `schema.rs` · `sql.rs` · `migrate.rs` | SQLite substrate (`rusqlite` + `sqlite-vec`), schema, the SQL gateway the host writes through, migrations |
 | `routing.rs` | The pipeline: classify → resolve/coreference → confidence-score → route (fact / note / relation / ephemeral) → fact⇄relation dedup → `review_status` gating |
-| `llm.rs` | Prompt assembly, blocking HTTP (`ureq`, rustls), JSON parsing, and the **two-call classifier** (see below). Provider-agnostic since SYN-150: `Anthropic`, `OpenAiCompatible`, or `Local` (an on-device backend passed in as a foreign callback, SYN-155). Every provider is normalized back to one Anthropic-shaped response, so the rest of the core never knows which one ran |
-| `usage.rs` | What each LLM call actually consumed (SYN-160): one row per call, never aggregated at write time, the four token buckets kept apart because they are priced differently. Rows replicate like any other table |
+| `llm.rs` | Prompt assembly, blocking HTTP (`ureq`, rustls), JSON parsing, and the **two-call classifier** (see below). Provider-agnostic: `Anthropic`, `OpenAiCompatible`, or `Local` (an on-device backend passed in as a foreign callback). Every provider is normalized back to one Anthropic-shaped response, so the rest of the core never knows which one ran |
+| `usage.rs` | What each LLM call actually consumed: one row per call, never aggregated at write time, the four token buckets kept apart because they are priced differently. Rows replicate like any other table |
 | `decay.rs` | Graceful forgetting: `memory_strength = exp(-Δdays/τ)`. An `episode` fades faster than a note, and is never deleted |
 | `summaries.rs` · `digest.rs` | Derived entity summaries (regenerated from active facts/relations) and the weekly digest |
 | `resources.rs` | URL fetch + summarize into searchable resources |
@@ -32,7 +32,7 @@ Prompts are **not compiled in**. They live as versioned files under [`prompts/`]
 
 **A prompt is data that has to be copied onto every surface.** Changing a file here ships it *nowhere*: each host reads its own deployed copy (`~/.synapse/prompts/`, override `SYNAPSE_PROMPTS_DIR`), the mobile apps carry theirs as bundled assets, and the desktop installer carries a third inside its bundled backend. Deploy the prompts before, or with, any build that reads them.
 
-### The classifier is two calls (SYN-171)
+### The classifier is two calls
 
 One capture, two independent requests:
 
@@ -50,11 +50,11 @@ Two consequences worth knowing before resizing a half:
 - Freed from competing with the note, the graph half **over-extracts** unless something stops it (19 facts became 43, including "bread" and "true"). Hence the sobriety rule at the top of `classifier-graph.md`: the freedom it is granted is about *suppression*, not volume, and `"facts": []` is the correct default answer.
 - **Haiku caches a system prefix only above 4096 tokens.** The single call (~5000) was cached; the two halves (~2900 and ~2400) are not. It is a cliff, not a slope: growing a half past the threshold costs *less* than leaving it just under.
 
-### Multilingual by construction (SYN-119)
+### Multilingual by construction
 
 The prompts are **EN-base**: their skeleton is English, and the output follows the capture's language. What the model *writes* (note, summaries, project content) is in the capture's language and is never translated; what the graph is *made of* (`atomic_note_kind`, entity `type`, fact and relation `predicate`, `category`) stays English snake_case, as an interlingua. The classifier emits an ISO 639-1 `language` field, so detection costs no extra call and no extra dependency. Adding a language is zero core work.
 
-## P2P sync (SYN-112)
+## P2P sync
 
 A **homemade** sync engine, not a third-party CRDT. cr-sqlite was dormant and rejected the schema, and Automerge is the wrong model for ~20 relational tables — and because an owner-lock means a single device runs the Dream Cycle, all derived tables are effectively single-writer, so the engine stays deliberately small: a `sync_log` change journal (a version map, not an event log), a hybrid logical clock computed in pure SQL, per-column **last-writer-wins** merge, and tombstones, over a versioned protocol. Any writer — the core, the Python host through the `sql.rs` gateway, even a `sqlite3` CLI — journals correctly with zero registration.
 
