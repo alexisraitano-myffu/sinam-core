@@ -58,281 +58,221 @@ Return ONLY valid JSON (no markdown):
   ]
 }
 
-WORK THROUGH THE SEVEN QUESTIONS BELOW IN ORDER. Each one settles something the next one relies
-on, and none of them may be reopened by a later one.
+WORK THROUGH THE NODES BELOW IN ORDER. Go down, settle each one, and never reopen it later.
+
+THIS HALF NEVER DECIDES WHETHER THERE IS A NOTE, and so can never stay silent out of fear of
+competing with one. That freedom bears on SUPPRESSION, never on volume: a fact still has to earn
+its place.
 
 
 ═══ 1. WHAT DESERVES A CARD? ═══
 
-Ask ONE question of every person, place, organization, animal, tool or object the capture names:
-WILL THIS COME BACK IN THE AUTHOR'S LIFE? Never decide on a capital letter — capitalisation is a
-typographic convention, not evidence that something lasts.
+For every person, place, organization, animal, tool or object the capture names, ask ONE question
+and only one: WILL THIS COME BACK IN THE AUTHOR'S LIFE? Never decide on a capital letter, which is
+a typographic convention and not evidence that something lasts. This is an ESTIMATE, taken before
+persistence is scored; the persistence number below asks the same question with a figure and may
+overturn it. When the two disagree, the number wins.
 
-Three answers, never two.
+Three outcomes, never two.
  · YES → the card is born.
  · UNSURE → the card is PROPOSED and goes to validation.
  · NO → no card.
-What moves a thing UP a rung is the author SAYING something about it: a recommendation, a
+What moves a thing up a rung is the author SAYING something about it: a recommendation, a
 judgement, a reason to come back to it.
 
-DECIDE FOR EACH ONE SEPARATELY. Settling one thing leaves the others entirely undecided.
+SETTLE EACH ONE SEPARATELY. One settled leaves the others entirely undecided.
 
-A COMMON NOUN OR A ROLE NEVER GETS A CARD, whatever the capture makes of it: "les enfants", "le
-comptable", "le kiné", "la hotte", "the accountant", "the kids". The only way out is an explicit
-mention that turns it into an identity — "le comptable" is a role, "le cabinet Fiducial" is an
-identity. A card named by a role would gather the facts of everyone who ever held it.
-
-A LIST OF THINGS TO BUY GIVES NO CARD AT ALL, not one per item and not one for the list — "beurre
-oeufs farine chocolat noir", "almond milk, Greek yogurt, blueberries, granola". Every item is a
-common noun, bought and consumed, and a card per grocery would bury the graph under the week's
-shopping. What surrounds the list still gets its cards as usual: "des pâtes pour le dîner avec
-Marcel" gives Marcel, never the pasta.
+A COMMON NOUN, A ROLE OR AN ORDINARY OBJECT NEVER GETS A CARD: "the kids", "the accountant", "the
+physio", "the extractor hood". The only way out is an explicit mention that turns it into an
+identity: "the accountant" is a role, "Fiducial & Co" is an identity.
 
 FOR A PLACE, A SHOP OR A CONSUMED OBJECT, ONE TEST SETTLES ALL THREE RUNGS: is the thing WHAT THE
 CAPTURE IS ABOUT, or a circumstantial detail of what happens in it? What it is about → card or
-proposal. Circumstantial detail → no card. The brand name never decides; the position in the
-sentence decides.
- · THE PLACE — "le colis Amazon arrive mercredi" is about the parcel, not about Amazon.
- · PRECISION REVERSES THE ANSWER — "l'Apple store" names a chain and stays a detail, "l'Apple
-   store de Lyon" is an identified place.
- · THE CONSUMED OBJECT — "j'ai pris du Paracétamol et annulé la gym" is about the headache;
-   "j'ai trouvé un nouveau médicament, le Paracétamol" makes it the subject.
+proposal. Circumstantial detail → no card. Three applications of the same test.
+ · THE PLACE: "the Amazon parcel arrives Wednesday" is about the parcel, not about Amazon.
+ · PRECISION REVERSES THE ANSWER: "the Apple store" names a chain and stays a detail, "the Apple
+   store in Lyon" is an identified place.
+ · THE CONSUMED OBJECT: "I took paracetamol and cancelled the gym" is about the headache, "I found
+   a new medicine, paracetamol" makes it the subject.
+The brand name never decides; the position in the sentence decides.
 
-THE NAMED ENDPOINTS OF A CHANGE SKIP ALL OF THIS. Whatever someone left and whatever they joined,
-wherever they moved from and to, each earns its card with the type it would get anywhere else —
-"il a quitté Acme pour Globex" gives BOTH Acme and Globex, "she moved from Berlin to Hamburg"
-gives both cities. This holds even when the capture never names who moved: a change whose
-endpoints go unrecorded loses the only durable thing it carried.
+WHEN THE CAPTURE DESCRIBES A CHANGE and names what is left and what is joined ("he left Acme for
+Globex", "she moved from Berlin to Hamburg") → a card for EACH end, with the type it would get
+anywhere else, without going through the persistence scale. This holds even when the capture never
+says who moved.
 
-NEVER NAME A CARD WITH A PRONOUN OR A PLACEHOLDER — "She", "Il", "They", "unknown", "someone". A
-node called "She" is permanent, and no later capture will ever merge into it. When a pronoun points
-at someone the capture DOES name, resolve it and attach everything to that person. When truly
-nobody is named, emit no card, no fact and no obsoletion.
-
-NEVER NAME A CARD WITH A URL OR ITS LAST SEGMENT AS IF IT WERE SETTLED. An address is not a name.
-When the capture leaves you no word for where a link goes, use the URL as a PROVISIONAL name and
-PROPOSE the card, so a person names it. You have not read the page and you never will.
+A URL WHOSE DESTINATION NO WORD OF THE CAPTURE NAMES: never name the card by the URL or its last
+segment, which are addresses and not names. If the page title is available it names the card.
+Otherwise the card goes to validation for a person to name it.
 
 
 ═══ 2. WHAT TYPE? ═══
 
-Take `type` STRICTLY from the ACTIVE ENTITY TYPES provided in context. The list grows, and it is
-the only source.
+Take `type` STRICTLY from the ACTIVE ENTITY TYPES given in context, never from anywhere else.
 
-IF NO ACTIVE TYPE FITS — a recipe, a software tool, a dish — do NOT force the nearest one. Set
-`"type": "concept"` AND fill `"type_proposal": {"value": "<type_en_snake_case>", "reason": "<why
-this new type>"}`. Everywhere else `type_proposal` stays null. YOU NEVER CHOOSE A TYPE, YOU
-PROPOSE IT. A type forced into the nearest slot is wrong for as long as the card lives; a proposal
-costs one confirmation.
+If no active type fits — a recipe, a software tool, a dish — do NOT force the nearest one. Set
+`"type": "concept"` AND emit a type PROPOSAL with its reason, which goes to validation. Never force
+an approximate type, never write a type that is not active. THE MODEL NEVER CHOOSES A TYPE, IT
+PROPOSES ONE.
 
-THE "project" GUARD: emit `"type": "project"` ONLY if you also produce a `project_entries` item
-for THIS entity. An ambiguous name, often an approximate transcription, must never create a
-project — when in doubt, `"type": "concept"`.
+Set `"type": "project"` only if a project entry is also produced for that same entity. Otherwise
+set "concept": an ambiguous name, often an approximate transcription, must never create a project.
 
 
-═══ 3. WHAT DOES THE CAPTURE SAY ABOUT EACH CARD? ═══
+═══ 3. A FACT, OR A RELATION? ═══
 
-TAKE THE CARDS FROM QUESTION 1 ONE AT A TIME and ask what THIS capture asserts about THAT one.
-Question 4 decides afterwards whether what you find is durable enough to keep, and it is the only
-thing allowed to discard it: do not anticipate it here, and do not skip a card because you expect
-it to. A capture rarely names someone for nothing.
+For each thing the capture asserts, once the cards are settled: is the object of the assertion an
+entity you also emit, or a literal value?
+ · An entity you emit → emit the RELATION ALONE, and never in addition a fact repeating it.
+   "Pierre works at Acme", Acme being a card → relation.
+ · A literal value → emit a FACT. "Claire lives in Lyon" → fact.
 
-WHAT COUNTS AS SOMETHING SAID: a tie to the author or to another card; a stance, a judgement or a
-preference they expressed; a recommendation they made; a property the capture states of them.
-"Mark suggested pushing the launch date" is Mark's position on the launch. "the sourdough was
-amazing but the croissants were disappointing" is two judgements about the bakery, and both belong
-on the bakery's card. Naming the card and leaving it empty records that a word was mentioned.
+NAMING THE PREDICATE. When the assertion is about an employer, a job title, a city of residence, a
+birthday, a phone, an email or an age, write the canonical predicate verbatim: works_at, job_title,
+lives_in, has_birthday, phone, email, age. These are the only ones the memory knows how to
+supersede; a synonym does not overwrite the old value, it stacks a second one beside it and both
+stay on the card.
 
-Then write what you found in one of two shapes. A RELATION links two NAMED cards. A FACT describes
-one card with a LITERAL value.
- · The object is a card you ALSO emit → emit the RELATION ALONE, never a fact repeating it.
-   "Pierre travaille chez Acme", Acme being a card → relation, no fact.
- · The object is a literal value → emit a FACT. "Claire habite à Lyon" → fact lives_in "Lyon".
- · relation confidence: 1.0 when stated unambiguously; below 0.7 when the link is hedged, inferred,
-   or you hesitate on either endpoint's identity.
+When no canonical predicate covers it, name it freely, in two steps. FIRST: a genuinely new kind of
+fact is EXPECTED here, and forcing an approximate match is WORSE than coining a name. THEN: check
+you could picture the SAME predicate on ANOTHER entity; if not it is too specific, so broaden it
+and move the detail into the value. "chess_club_membership_date" will never serve again;
+"member_since" says as much and will still hold next month.
 
-NAMING THE PREDICATE. These seven are CANONICAL — write them verbatim rather than a synonym of
-your own: works_at, job_title, lives_in, has_birthday, phone, email, age. They are the only claims
-the memory knows how to supersede: writing `works_as` instead of `works_at` does not replace last
-year's employer, it stacks a second one beside it and both stay on the card.
+FAMILY TIES TAKE THE PRECISE PREDICATE THE CAPTURE CARRIES, `son_of`, `daughter_of`,
+`sibling_of`, and never the generic `child_of` or `parent_of`, which loses what the sentence said.
+The generic one is written only when the capture itself stays generic ("their children"). What
+deduction produces follows the same rule: deducing a tie is no licence to impoverish it.
 
-Anywhere else, name it freely, in two steps.
- · FIRST: a genuinely new kind of fact is EXPECTED here, and forcing an approximate match is WORSE
-   than coining a name.
- · THEN: check you could picture the SAME predicate on a DIFFERENT card. If not, it is too
-   specific — broaden it and move the specifics into `value`. "chess_club_membership_date" fits one
-   person and one club and will never be used again; "member_since" says as much and still applies
-   next month, to someone else.
- · The predicate names the KIND of claim, never this one claim: "supports_manual_tagging",
-   "uses_font_rarely" are a predicate and a value folded together, and must be split.
- · NEVER coin a predicate that encodes an INTENTION or a state still to come — `planned_*`,
-   `future_*`, `upcoming_*`, `will_*`. Such a fact turns FALSE on the day it comes true, and
-   nothing will ever contradict it. What is merely planned belongs to the note, not to the graph.
+An assertion about an INTENTION or a state still to come emits NO fact, and never a predicate in
+planned_, will_, upcoming_, future_. Such a fact turns FALSE the day it comes true, and nothing
+will ever contradict it. What is planned belongs to the note, not to the graph.
 
-DEDUCTION YES, INVENTION NO. The line is what the capture ENTAILS.
- · DEDUCE AND EMIT what the capture's own content implies, never leave it out through hesitation.
-   "Yanis is Marc and Julie's son and Léna's brother" → son_of(Yanis, Marc), son_of(Yanis, Julie),
-   sibling_of(Yanis, Léna) AND daughter_of(Léna, Marc), daughter_of(Léna, Julie).
- · LABEL a deduction for what it is: a deduced FACT takes evidence_strength "implicit", a deduced
-   RELATION takes confidence ≈ 0.6 — siblings may be half-siblings and parents step-parents, so a
-   deduced tie is very likely rather than certain.
- · NEVER invent world knowledge the capture does not carry. "Marie a un chat qui s'appelle Gipsy"
-   gives a name and an owner, nothing else: no breed, no age, no species detail.
+WHAT THE CAPTURE ENTAILS WITHOUT WRITING IT OUT ("Yanis is Marc and Julie's son" also entails
+Julie's tie to Yanis) → emit it, never drop it out of hesitation, AND label it as deduced: a
+deduced fact takes evidence strength "implicit", a deduced relation takes a lowered confidence.
+Never emit world knowledge the capture does not carry: "Marie has a cat called Gipsy" gives a name
+and an owner, nothing else.
+
+A PRONOUN pointing at someone the capture DOES name → resolve it and attach the fact to that
+person. Pointing at nobody → emit no card, no fact and no obsoletion. NEVER write a card name that
+is a pronoun or a placeholder ("She", "someone", "unknown"): such a node is permanent and no later
+capture will ever merge into it.
 
 
 ═══ 4. IS IT DURABLE? ═══
 
-Emit a fact ONLY when what it would say will still be TRUE next month AND still USEFUL to someone
-who never reads this capture. Otherwise emit none. Never restate the capture's own sentence as a
-fact, never store a one-off action ("bought bread", "went for a run") or an intention, and never
-invent a value to avoid leaving a field empty.
+Emit a fact only when what it would say will still be TRUE next month AND still USEFUL to someone
+who never reads this capture. Otherwise emit none: an empty list is the RIGHT answer for most
+captures, not a failure. Never restate the capture's own sentence as a fact, never store a one-off
+action or an intention, never invent a value to avoid an empty field.
 
-THE SCENE PASSES, THE TIE REMAINS. An evening, a meal, a conversation is never durable in itself,
-but what it REVEALS about the people in it almost always is, and discarding the capture because the
-evening was one-off loses that with it. "super soirée barbecue chez Antoine et Clara" says two
-people share a home and receive the author; "soirée avec Julie et Romain, on a testé le resto
-mexicain" says who the author's friends are. Emit the TIE, as a relation between the cards, never
-the evening as a fact. A STANCE works the same way: "Dave thinks we should cut the marketing budget
-by half" leaves a position on Dave's card that outlives the conversation it was said in.
+NEVER A MOOD OR A PSYCHIC STATE, the author's or anyone else's ("feels overwhelmed", "was sad"). A
+lasting PHYSICAL condition is not a state and stays allowed ("has asthma", "wears insoles"). A
+condition is a fact, a state is the weather.
 
-NEVER A MOOD OR A PSYCHIC STATE, the author's or anyone else's: "feels overwhelmed", "is
-stressed", "was sad". A lasting PHYSICAL condition is a different thing and stays allowed: "has
-asthma", "wears orthotic insoles". A condition is a fact, a state is the weather.
+PERSISTENCE scores THE TIE TO THE AUTHOR'S WORLD, from 5 (permanent) down to 1 (passing mention),
+never how eternal the statement happens to be. The question is "will this come back in their
+life?", not "is this true forever?": a species never changes, and a parrot seen once at a market
+is still a 1. Below the threshold the thing gets NO card, even where the first node estimated
+otherwise. This number settles it last.
 
-persistence_value — THE TIE TO THE AUTHOR'S WORLD, never how eternal the statement happens to be.
-5 = permanent (birth date, family tie, first name)
-4 = stable but changeable (workplace, address)
-3 = current state (ongoing project)
-2 = contextual (one-off event)
-1 = noise (passing mention)
-Ask "will this come back in the author's life?", not "is this true forever?". A species never
-changes, and a parrot seen once at a market is still a passing mention: rate it 1. Otherwise every
-permanent attribute of every stranger would earn a node. THIS NUMBER DECIDES LAST: below the
-threshold the thing gets NO card, even where question 1 leaned the other way.
+EVIDENCE STRENGTH: explicit when the fact is stated directly. Hedged when the capture carries an
+uncertainty marker ("I think", "seems", "probably"). Implicit when the fact is not stated but
+deduced from context. Read it in the capture's own language, whatever it is.
 
-evidence_strength, read in the capture's own language whatever it is:
-explicit = stated directly, no uncertainty marker
-hedged   = an epistemic marker is present (EN "seems", "I think", "apparently", "probably";
-           FR "semble", "je crois", "il paraît", "devrait", "peut-être", "probablement")
-implicit = not stated, inferred from the context
+YOU NEVER CHOOSE BETWEEN ASSERTING A FACT AND PROPOSING IT, and no field carries that choice. You
+set the evidence strength and the persistence; a gate downstream derives the destination from
+them. What that gives: `explicit` ASSERTS from persistence 2 upwards; `implicit` NEVER asserts,
+whatever the persistence; `hedged` never asserts either. SO "PROPOSING A FACT" IS WRITTEN
+`evidence_strength: "implicit"`, and nothing else does it. Type proposals and rename proposals do
+not go through this: they have their own field.
 
-A BIRTH DATE: WHAT CAN YOU RULE OUT? A birthday capture may be worth a FACT (the date of birth, on
-the person's card), an EVENT (a gathering the other pass will handle), or BOTH, and the sentence
-rarely says which. ASKING IS THE DEFAULT. There are exactly three ways to rule something out, and
-your only job here is the fact.
- · A DATED BIRTH — "né le 12 juin 1990", "Nadia est née le 5 février 1992" → has_birthday,
-   evidence_strength "explicit". Nothing is left to guess.
- · ANYTHING ELSE STILL EMITS has_birthday, marked "implicit", which is what sends it to be
-   confirmed instead of written in. A date read off a GATHERING ("la fête d'anniversaire de Yanis
-   est le 12 juin"), because people gather on the day itself often, not always. A BARE birthday
-   date ("le 12 juin c'est l'anniversaire de Yanis", "16 June is Léa's birthday"), because what the
-   sentence states is a DAY, not what that day names. A date only DEDUCED FROM A BEARING
-   ("l'anniversaire de Sophie c'est demain", "c'est l'anniv de ma mère mardi"), which is never
-   explicit however plainly the sentence states the birthday: resolve it as usual and emit it.
- · AN AGE WHERE A DATE SHOULD BE — "Tom a fêté ses 30 ans", "she turns 50 next month" → NO
-   has_birthday, and this forbids that ONE predicate and nothing else. The age is still what the
-   capture states, so it keeps its own fact: age = "30". Deriving a birth year from an age lands on
-   the wrong year one time in two.
-Withholding the date here loses it for good. Emit it, and let its evidence strength carry the doubt.
+A BIRTH DATE. ONE THING ALONE ASSERTS THIS FACT: a DATED BIRTH ("born on 12 June 1990", "Nadia was
+born on 5 February 1992"). There, nothing is left to guess. EVERYTHING ELSE PROPOSES IT, which as
+the line above says means `evidence_strength: "implicit"` and nothing else: a date read off a
+party, because a party often falls on the day itself without that being sure; a bare birthday
+date, because nothing says whether it names the birth or the occasion; a date only deduced from a
+bearing ("tomorrow", "Tuesday", "this weekend"), which is NEVER explicit however plainly the
+sentence states the birthday, so resolve it and emit it with `evidence_strength: "implicit"`. AN
+AGE INSTEAD OF A DATE ("Tom turned 30") emits NO has_birthday: deriving the year would be
+invention dressed as arithmetic, wrong one year in two. The age keeps its own fact.
 
 
 ═══ 5. HAS SOMETHING STOPPED BEING TRUE? ═══
 
-`obsoleted_facts` is the ONLY way to say that something the memory may already hold no longer
-holds. FOUR QUESTIONS IN ORDER, stop at the first that answers.
+When the capture carries a marker of ending, leaving or change, FOUR QUESTIONS IN ORDER, stopping
+at the first that answers.
+ 1. IS IT A RENAME? → it is a rename, and nothing is obsoleted.
+ 2. IS THERE A SUCCESSOR IN THE SAME CAPTURE? → it is a replacement: emit the NEW fact AND
+    obsolete the OLD one, both.
+ 3. IS THE SUBJECT NAMEABLE? A bare pronoun with nobody to refer to ("he left Acme for
+    Globex", "she moved") → obsolete NOTHING, however plain the replacement looks. This question
+    is asked AFTER question 2 and overrules it.
+ 4. ONLY THEN: an assertion left with no successor is obsoleted, with the value that stopped
+    holding, or with no value when the capture names none.
 
-1. IS IT A RENAME? "mon projet ne s'appelle plus Synapse mais Sinam", "Acme has been renamed
-   Globex" → that is `renamed_to` on the card, and NOTHING goes here. A change of NAME is not a
-   change of fact, and the negation marker in the phrasing does not make it one. `renamed_to`
-   PROPOSES and a person confirms: never write the new name into `canonical_name` yourself, never
-   emit a fact for the rename as well, and never read a rename into a spelling variant or a
-   nickname — those are `aliases`.
-2. IS THERE A SUCCESSOR IN THE SAME CAPTURE? Then it is a REPLACEMENT, and a replacement takes
-   BOTH: the NEW value as an ordinary fact AND an obsoletion of the OLD one. "Pierre ne travaille
-   plus chez Acme, il est maintenant chez Globex" → fact works_at=Globex AND obsoleted
-   works_at=Acme. Never assume the memory will retire the old value on its own; it does that only
-   for the handful of claims it knows can hold one value at a time, and everything else would end
-   up carrying two truths at once. A departure marker names a successor just as plainly as an
-   explicit "ne … plus … maintenant": "he moved from Lyon to Nantes", "il a quitté Acme pour Globex".
-3. IS THE SUBJECT NAMEABLE? An obsoletion needs `entity_canonical`, and it must name someone the
-   capture actually names. A bare pronoun with nobody to refer to ("il a quitté…", "she moved…")
-   leaves `obsoleted_facts` EMPTY.
-4. ONLY THEN: a claim left with NO successor belongs here, in ANY language — the marker is what
-   matters, never the language it is written in. FR "ne … plus", "j'ai quitté", "en fait ce n'est
-   pas"; EN "no longer", "not … any more"; ES "ya no" ("Sofía ya no vive en Madrid" → obsoleted
-   lives_in Madrid); and their equivalents elsewhere. `value` names what stopped holding when the
-   capture says it ("plus chez Acme" → "Acme"); null when it does not ("il n'a plus de téléphone"),
-   which retires the claim entirely.
+The marker counts, never the language it is written in. Treat a marker in any language alike.
 
-Never put the same claim in both `facts` and `obsoleted_facts`. A plain ABSENCE stated for the
-first time ("Marie n'a pas de chat", "he has no car") denies nothing and teaches nothing durable:
-no fact, no obsoletion. A change only SUGGESTED ("je crois qu'il a quitté Acme") stays out and is
-hedged in the note instead — retiring knowledge on a maybe is worse than keeping it.
-`obsoleted_facts: []` is the normal answer, and by far the most common one.
+A rename declared explicitly ("my project is no longer called X but Y", "Acme has been renamed
+Globex") → emit a rename PROPOSAL, which is written by filling the card's `renamed_to` field with
+the NEW name, and leave `canonical_name` intact. Never write the new name
+yourself, never emit a fact for the rename as well, never read a rename into a spelling variant or
+a nickname: those are aliases.
+
+An absence stated for the FIRST time ("Marie has no cat") denies nothing and teaches nothing. A
+change merely SUGGESTED ("I think he left Acme") is not asserted. Neither obsoletes anything and
+neither emits a fact; a suggested change is hedged in the note instead. Retiring knowledge on a
+maybe is worse than keeping it.
+
+Before answering, check that a fact and an obsoletion do not carry the same assertion, and drop one
+if they do. Obsoleting nothing is the normal answer, and by far the most frequent.
 
 
 ═══ 6. THE LINKS ═══
 
-EVERY http(s) URL in the capture produces EXACTLY ONE item in `resources`, with no exception. This
-is mechanical, not a judgement: the sobriety rule of question 4 governs FACTS, never links. A link
-the author saved is a link the author saved, even bare, even when you can tell nothing about where
-it leads — dropping it loses the only thing the capture contained.
+EVERY URL in the capture emits EXACTLY ONE link, with no exception, even bare, even unreadable.
+This is mechanical and not a judgement: the sobriety rule above governs FACTS, never links. A link
+the author kept is a link the author kept.
 
-NAME THE CARD EACH LINK BELONGS TO, and emit that card in `entities` so its facts, its relations
-and its summary work like any other's. Two shapes, and the TYPE you give the card is what tells
-them apart.
- · THE LINK GIVES ACCESS to a thing that has its own identity — a tool, a place, a restaurant, an
-   organization, a person. Emit THAT thing with ITS type and point the URL at it. "the Linear board
-   https://linear.app/…" → card Linear (type tool), `entity_canonical` "Linear". Never a second
-   card for the same thing: one node, one URL on it.
- · THE LINK IS THE THING — an article, a video, a podcast, a paper. Nothing exists behind it but a
-   content. Emit a card of type "resource", named by what the capture calls it.
+NAME THE ENTITY EACH LINK BELONGS TO, and emit it among the cards so it works like any other.
+ · The link gives ACCESS to a thing that has its own identity (a tool, a place, a shop, an
+   organization) → emit that thing with ITS type and point the URL at it.
+ · The link IS the thing (an article, a video, a podcast, a paper) → emit an entity of type
+   resource, named by what the capture calls it.
+One node per thing, never two.
 
-`user_comment` carries the AUTHOR'S OWN WORDS about the link and nothing else. It says why THEY
-kept it, which no summary of the page could say. "https://… super intéressant sur la mémoire" →
-user_comment "super intéressant sur la mémoire". They said nothing → null.
+YOU HAVE NOT READ THE PAGE. Never write a title, a summary, an author or a fact from the URL alone,
+and never restate a URL as a fact: it is an identity, not a claim.
 
-YOU HAVE NOT READ THE PAGE. Never write a title, a summary, a fact or an author you would be
-inferring from the URL alone, and never restate a URL as a fact: it is an identity, not a claim.
-No URL in the capture → `"resources": []`.
+The link's comment carries the AUTHOR'S OWN WORDS about it, as they stand: that is what says why
+THEY kept it, which no summary of the page can say. They said nothing → leave it empty.
 
 
 ═══ 7. THE PROJECTS ═══
 
-A PROJECT is a MULTI-step undertaking or one that spans TIME, driven by a goal: learn X, reach a
-level, build or renovate Y, organize a trip. A goal implying several steps or a long duration IS a
-project even without the word — "climb a 7a", "learn Japanese", "renovate the flat".
+The capture cites work in progress or a goal, describing an undertaking of SEVERAL steps or one
+that spans TIME, driven by a goal, even without the word "project" → produce a project entry with
+the excerpt of the capture that concerns it.
 
- · Tied to one or more projects → ONE `project_entries` item per project, each with the excerpt
-   that concerns IT alone. "I made progress on sinam and Atlas today" → two items.
- · Never two items for the same `project_canonical` — merge them into one.
- · "new project: X" → `is_new: true`, `project_canonical: X`.
- · NAME IT BY ITS DURABLE DOMAIN, never by the one-off action: "a climbing project to do a 7a" →
-   `project_canonical` "Climbing", content "Goal: climb a 7a", so later progress attaches to it.
-   The list of existing projects is provided in context — always prefer an existing name to a
-   variant of it.
- · No identifiable project → `"project_entries": []`.
- · A DURABLE LITERAL DATUM ABOUT THE PROJECT ITSELF — a total, a budget, a count, a metric, a
-   chosen option, a level or milestone reached ("the terrace will cost 3000 EUR", "40 climbing
-   sessions in total", "my first violet-grade boulder" → best_grade "violette") → ALSO emit the
-   project in `entities` with type "project" and attach the datum as a fact there. The narrative
-   stays in `project_entries.content`. Emit it even when it supersedes an older datum, the memory
-   handles obsolescence. If the datum names another card you emit, it is a relation.
+Naming it: prefer its durable DOMAIN over the one-off action. "climb a 7a" gives the project
+"Climbing", the goal going into the entry's content. Prefer an existing project name to a variant
+of it; the list of existing projects is given in context.
+
+Several projects cited → one entry per project, each with its own relevant excerpt alone. Never two
+entries for the same project: merge them into one.
+
+The capture states a datum about the project ITSELF, literal and durable — a total, a budget, a
+count, a milestone reached → it is usually worth ALSO emitting the project as an entity of type
+"project" and attaching the datum there as a fact. The narrative stays in the entry's content.
+Emit it even when it supersedes an older one; the memory handles obsolescence. If the datum names
+another entity you emit, it is a relation.
 
 
-═══ BEFORE YOU ANSWER ═══
+═══ AT EVERY NODE, IN CASE OF A TIE ═══
 
-RE-READ YOUR `entities` LIST ONE CARD AT A TIME. Questions 3 and 6 apply to every one of them, and
-a card you settled early has not necessarily been through them: what does the capture say about
-this one, and does a link point at it? A card carrying a name and nothing else is the one failure
-this pass can produce entirely on its own, because the capture it came from will never be read
-again to repair it. THE REPAIR IS TO FILL THE CARD, never to drop it.
-
-Then check that no claim appears in both `facts` and `obsoleted_facts`, and drop one of the two if
-it does.
-
-AND WHEREVER TWO ANSWERS DEFEND THEMSELVES EQUALLY AND NOTHING SEPARATES THEM: KEEP RATHER THAN
-DISCARD, PROPOSE RATHER THAN ASSERT. Never settle a doubt by deleting. A card proposed costs one
+Two answers defend themselves equally and nothing separates them: KEEP RATHER THAN DISCARD,
+PROPOSE RATHER THAN ASSERT. Never settle a doubt by deleting. A card proposed costs one
 confirmation; a card withheld costs the thing itself.
 
 <!-- DATES:DEBUT — bloc partagé mot pour mot par les deux moitiés.
