@@ -564,3 +564,59 @@ ajouter à la liste des règles auxquelles il manque juste un cas, avec `N3-a`,
 **Ce qui est vert.** Aucun `kind` sans note (`N9-c`), aucune tâche datée
 transformée en événement sur les soixante concernées (`N4-d`), plus aucun
 événement à date passée (`N6-e`).
+
+---
+
+## Le trou qu'Alexis a trouvé le 30/08, et une deuxième sur-lecture
+
+Question posée après sa relecture des quatre-vingts cas : « j'ai traité pas mal
+d'anniversaires, mais que côté événement, pas sur la création du fait sur la
+fiche associée, c'est normal ? »
+
+Non. **Onze des vingt-cinq cas anniversaire du corpus n'assertaient rien côté
+graphe**, et parmi eux les SEPT dont je venais de retirer la récurrence. Le
+raisonnement du retrait était « ce qui revient chaque année est le fait
+`has_birthday` sur la fiche ». Aucun de ces sept ne vérifiait que ce fait naît.
+J'ai donc retiré une garantie et mis à la place une promesse que rien ne mesure.
+
+### Ce qui a été ouvert
+
+Un axe `fact_asserted`, pendant positif de `fact_proposed`. Les deux rejouent la
+même porte de destination sur la sortie du classifieur : le modèle ne choisit
+jamais entre asserter, proposer et jeter, il choisit une force de preuve et une
+persistance, et la porte fait le reste. L'axe mesure donc la conséquence.
+
+Dix cas reçoivent leur assertion : neuf en `fact_asserted`, un en
+`fact_proposed`. Restent quatre sans axe graphe et c'est justifié : les trois cas
+de scénario, qui mesurent un fil et pas une sortie, et l'anniversaire de mariage
+des parents, dont aucune personne nommée ne porterait le fait.
+
+### La deuxième sur-lecture, dans `G4-e`
+
+En écrivant ces assertions, la règle s'est révélée fausse de la même façon que
+`N6-d` le matin même. Elle disait : « aucun mot d'anniversaire, ou un ÂGE à la
+place d'une date → pas de has_birthday du tout ». Or « Léon est né le 27 juillet
+1995 » ne porte pas le mot anniversaire et énonce la date de naissance la plus
+explicite qui soit. La règle la privait de son fait, contre deux cas du corpus
+qui l'attendent depuis toujours.
+
+L'échelle arbitrée le 26/08 ne parlait pas des mots employés, elle parlait de la
+SOURCE de la date. Corrigée en ce sens :
+
+- **la date est ÉNONCÉE** directement, naissance datée ou anniversaire posé avec
+  son jour et son mois → `has_birthday` explicite, il n'y a rien à deviner, et le
+  doute qui reste porte sur la FÊTE et non sur la date ;
+- **la date est LUE SUR UNE FÊTE** → `has_birthday` implicite, donc en
+  validation : une fête tombe souvent le jour même, pas toujours ;
+- **aucune date, seulement un ÂGE** → pas de `has_birthday` ; en déduire l'année
+  serait de l'invention déguisée en arithmétique.
+
+### Ce que les deux sur-lectures ont en commun
+
+Les mêmes mots, le même jour, la même cause. Une remarque ou un arbitrage qui
+distingue deux choses (le souvenir et la récurrence, la source d'une date et les
+mots qui l'entourent) se relit comme s'il n'en distinguait qu'une, et la règle
+qui en sort est plus étroite ou plus large que ce qui a été décidé. Aucune
+relecture attentive ne les a trouvées. Ce qui les a trouvées, c'est la
+confrontation au corpus, et pour la seconde, une question posée par quelqu'un qui
+relisait autre chose.
