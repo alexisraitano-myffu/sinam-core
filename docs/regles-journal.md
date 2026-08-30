@@ -611,12 +611,52 @@ SOURCE de la date. Corrigée en ce sens :
 - **aucune date, seulement un ÂGE** → pas de `has_birthday` ; en déduire l'année
   serait de l'invention déguisée en arithmétique.
 
-### Ce que les deux sur-lectures ont en commun
+### Le troisième passage, et le bon
+
+Les deux corrections précédentes tournaient autour de la vraie règle sans la
+tenir. Alexis l'a énoncée en une phrase le 30/08 : « le cas anniversaire est
+complexe, on doit presque toujours demander à l'utilisateur si c'est un fait, un
+événement, ou les deux, sauf dans les cas où on peut exclure l'un ou l'autre ».
+
+Ce qui change tout, c'est l'ordre de la question. On ne se demande plus « quelle
+formulation est-ce », on se demande **ce qu'on peut EXCLURE**, et la réponse par
+défaut est de demander. Il n'y a que trois exclusions possibles.
+
+| ce que dit la capture | ce qui est exclu | ce qui naît |
+|---|---|---|
+| une NAISSANCE datée | l'événement, personne n'assiste à une naissance passée | `has_birthday` ASSERTÉ, aucun souvenir |
+| une CÉLÉBRATION nommée | rien du côté événement, il est certain | l'`event` à la date de la fête, sans récurrence, ET `has_birthday` PROPOSÉ |
+| un ÂGE sans date | les deux | rien, l'âge garde son propre fait |
+| une date NUE | **rien** | l'`event` sous le seuil de confiance ET `has_birthday` PROPOSÉ |
+
+Et la récurrence cesse d'être une décision du modèle. Si l'utilisateur répond
+« c'est le fait », le fait est récurrent par nature. S'il répond « c'est
+l'événement », l'événement est daté une fois et ne se rejoue pas. Il peut
+répondre les deux. Dans tous les cas, ce n'est pas au modèle de trancher.
+
+**Ce que ça corrige de la correction précédente.** Une heure plus tôt le même
+jour, j'avais ASSERTÉ le fait sur les huit anniversaires nus, au motif que « la
+date est énoncée, il n'y a rien à deviner ». C'était faux : ce qui est énoncé est
+un JOUR, pas ce que ce jour désigne. L'anniversaire nu est précisément le cas où
+rien ne s'exclut. Les huit sont repassés en PROPOSÉ, et seules les trois
+naissances datées gardent un fait asserté.
+
+### Ce que les trois sur-lectures ont en commun
 
 Les mêmes mots, le même jour, la même cause. Une remarque ou un arbitrage qui
 distingue deux choses (le souvenir et la récurrence, la source d'une date et les
-mots qui l'entourent) se relit comme s'il n'en distinguait qu'une, et la règle
-qui en sort est plus étroite ou plus large que ce qui a été décidé. Aucune
+mots qui l'entourent, un jour et ce que ce jour désigne) se relit comme s'il n'en
+distinguait qu'une, et la règle qui en sort est plus étroite ou plus large que ce
+qui a été décidé. Aucune
 relecture attentive ne les a trouvées. Ce qui les a trouvées, c'est la
 confrontation au corpus, et pour la seconde, une question posée par quelqu'un qui
 relisait autre chose.
+
+
+**Et la troisième dit autre chose encore.** Les deux premières corrections ont
+été faites en cherchant la bonne réponse dans les cas du corpus. Elles ont
+rapproché la règle sans l'atteindre, parce que les cas montrent des sorties et
+pas le critère qui les produit. Ce qui a tranché, c'est une phrase d'Alexis qui
+renversait la question : ne pas demander de quelle formulation il s'agit, mais ce
+qu'on peut EXCLURE. Le corpus trouve qu'une règle est fausse ; il ne dit pas
+laquelle écrire à la place.
