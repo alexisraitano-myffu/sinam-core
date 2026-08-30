@@ -27,7 +27,7 @@ colonne `remarques` étant faite pour ça.
 | N1-h | prompt | Découpée de son jumeau `N1-i` le 29/08 : une seule règle ne peut pas envoyer vers deux nœuds. |  |
 | N1-i | prompt | Existe parce qu'aucune fiche n'existerait pour porter cette information. |  |
 | N2-b | exemples | Une habitude est un savoir qui dure et qui peut cesser, pas un moment vécu. |  |
-| N2-d | exemples | — |  |
+| ~~N2-d~~ | — | **Retirée le 30/08.** Placée en amont de `N7-c`, elle gagnait par le rang et annulait la décision du 29/08 pour toute corvée formulée comme un statut. Identifiant vacant. |  |
 | N2-e | prompt | Une note porte toujours un mouvement qu'aucun triplet ne tient, et s'il y en avait un, la liste des raisons de garder l'aurait déjà pris. `N2-c` fusionnée ici le 29/08 : un attribut est un triplet. |  |
 | N2-f | prompt | — |  |
 | N3-a | exemples | « Plusieurs étapes » est un jugement : « apprendre le japonais » n'a pas le mot projet dedans. |  |
@@ -143,7 +143,7 @@ c'est un risque de structure, pas un défaut constaté. Le bloc des dates est la
 seule duplication protégée par un test.
 
 **Un tiers des règles sont déterministes, et aucune n'est dans le code.** Sur les
-93 règles, 34 se calculent ou se vérifient mécaniquement, et elles vivent toutes
+règles d'alors, 34 se calculent ou se vérifient mécaniquement, et elles vivent toutes
 dans le prompt, c'est-à-dire à l'endroit exact où deux moteurs peuvent diverger.
 Les sept premières à sortir : `N0-b` (les dates), `N9-a` (l'éphémère, dont la
 définition est de toute façon à reprendre), `G2-c` (la garde projet), `G3-b` (les
@@ -204,3 +204,210 @@ et pas l'effet du retrait. L'ordre est celui-ci. Écrire le prompt à partir de 
 règles. Passer le corpus une fois : ce rouge-là est l'écart à combler. Puis une
 seconde passe avec les quatre candidates retirées, et seule la différence entre
 les deux répond à la question.
+
+---
+
+## La confrontation au corpus (30/08)
+
+Les 500 cas du corpus passés dans les règles, nœud par nœud. Ce qui suit est
+l'écart mesuré, pas une proposition de réécriture : rien n'a été changé ni dans
+les règles ni dans le corpus.
+
+Un mot sur ce qui est comparé. Le corpus porte l'arbitrage HUMAIN, pas la sortie
+du modèle. Un écart entre une étiquette et une règle ne dit donc pas que le
+modèle se trompe : il dit que les deux artefacts qui font autorité se
+contredisent, et qu'un des deux est en retard sur l'autre.
+
+### 1. Les cas que les règles ont fait changer de camp
+
+**48 des 95 cas étiquetés « aucun souvenir » sont maintenant gardés par les
+règles.** Un peu plus de la moitié tient toujours, l'autre non.
+
+| famille | nb | ce qui a bougé |
+|---|---|---|
+| corvée déjà FAITE | 16 | `N2-a` retiré, `N7-c` les prend en épisode |
+| séance ou moment ordinaire | 9 | `N7-c` sans condition d'intérêt |
+| ressenti nu | 10 | `N7-c` ouvert aux ressentis, `N8-b` renvoie explicitement à lui |
+| corvée encore À FAIRE | 7 | `N4-e`, plus aucun jugement de trivialité |
+| divers | 6 | voir la liste 3 |
+
+Les 42 premiers ne sont pas un arbitrage nouveau : ils découlent mécaniquement
+des deux décisions du 29/08 (corvée future en tâche, corvée passée en épisode) et
+de l'ouverture aux ressentis. Le corpus est simplement resté en arrière.
+Les 6 derniers sont de vraies questions ouvertes.
+
+Corvée faite : `x-past-errand` `r3f-episodic-past-action` `r3g-voisin-deja-vecu`
+`ez-reread-notes-fr` `p-dur-action-ponctuelle-vs-durable`
+`p-projf-budget-without-entity` `ord-dicte-boulangerie-garage`
+`g-routine-pain-passe` `g-routine-poubelles-dicte` `r1i-course-passee-fait`
+`o-tronque-voiture-fr` `ord-en-010` `ord-en-010-3` `ord-en-005-2`
+`r1g-chore-nested-project` `g-status-eaten-en`
+
+Séance ou moment : `g-type-episodic` `ep2` `g-ord-en-001` `ord-6-sport-session-fr`
+`g-ord-09-sports-detail-fr` `ord-en-007-3` `ord-10-train-horaire-fr`
+`p-type-animal-builtin` `ord-5-sante-dictee-fr`
+
+Ressenti nu : `emo-bare-state-fr` `emo-bare-state-en` `emo-bare-state-duration-fr`
+`emo-good-day-fr` `r1a-negatif-non-action-etat` `ord-en-006-2`
+`o-en-feeling-slept-bad` `g-ord-07` `ord-en-05-3` `o-en-005`
+
+Corvée à faire : `g-ephemeral-trivial` `p1` `p3` `r1g-chore-fr` `r1g-chore-en`
+`ord-en-006` `ord-en-06`
+
+Divers : `g-progress-decision-fr` `g-progress-metric-en`
+`p-type-organisation-builtin` `r1f-action-annulee-dicte`
+`g-link-restaurant-map-fr` `res-place-fr`
+
+### 2. Les règles qu'aucun cas ne couvre
+
+Une règle sans cas n'est pas fausse, elle est invérifiable. Deux causes très
+différentes, à ne pas confondre.
+
+**Le corpus ne sait pas mesurer ça du tout.** Aucun axe ne porte l'objet de la
+règle, donc aucun cas ne pourra jamais la couvrir tant que le harnais n'ouvre pas
+l'axe. Ces règles sont écrites et vivent hors de portée.
+
+| règle | ce qu'elle demande | pourquoi c'est hors de portée |
+|---|---|---|
+| `N9-c` | ne pas émettre un souvenir dont la note serait vide | `note` est un booléen, il ne dit rien du texte |
+| `N9-h` | ce que la note porte | idem |
+| `N9-j` | le contenu éphémère, dans les mots de l'auteur | idem |
+| `N9-k` | le résumé décrit sa propre note | idem |
+| `N10-e` | l'ordre des souvenirs rendus | `memories` compte, il n'ordonne pas |
+| `N0-a` (2e moitié) | écrire la note dans la langue de la capture | `language` mesure le champ, pas la prose |
+| `G0-b` | squelette en anglais, prose dans la langue | aucun axe |
+| `G4-c` | l'échelle de persistance de 5 à 1 | seule la sortie est mesurée, jamais le chiffre |
+
+**Le corpus saurait, mais le cas n'existe pas.** Celles-là se referment en
+écrivant un cas, et c'est du travail de corpus, pas de règle.
+
+| règle | le cas qui manque | mesure |
+|---|---|---|
+| `N3-a` (2e moitié) | un projet douteux qui descend sous le seuil | 0 cas `proj` + `needs_review` |
+| `G6-c` | une URL qu'on refuse de reformuler en fait | 0 cas `resource_url` + `forbidden_predicate` |
+| `G1-g` | une URL sans nom, fiche envoyée en validation | 0 cas `resource_url` + `entity_proposed` |
+
+**Couverture d'un ou deux cas seulement**, ce qui ne prouve pas grand-chose :
+`facts_on` 1, `relation_proposed` 1, `type_proposal` 2, `renamed_to` 2,
+`N9-e` 2, trois souvenirs 2.
+
+### 3. Là où deux règles se contredisent
+
+Sept, dont trois qui changent une sortie.
+
+**A. `N2-d` contre `N7-c`, et c'est la plus grave.** Une corvée faite donne un
+épisode, une capture qui rapporte un STATUT (« c'est fait », « c'est envoyé »)
+ne laisse rien. Or « electricity bill paid », « pression des pneus faite ce
+matin », « already ate » sont les deux à la fois. `N2-d` est en amont de `N7-c`,
+donc il gagne, et la décision du 29/08 est annulée en silence pour toute corvée
+formulée comme un statut. C'est exactement le défaut de rang que ce document
+existe pour empêcher. Six cas au moins.
+
+**B. `N1-d` contre `N2-f`.** « le restaurant Chez Léon, très bon » avec un lien :
+`N2-f` est écrit pour ce cas et dit de ne rien garder, mais `N1-d` (l'auteur
+prend position) se lit AVANT et garde. Le corpus tranche pour `N2-f`, la règle
+tranche pour `N1-d`. Deux cas.
+
+**C. `N1-d` n'a pas de nœud d'accueil.** Une prise de position sur une personne
+ou une entreprise est gardée par `N1-d`, puis ne trouve aucune règle en `N8` :
+`N8-e` ne couvre que l'œuvre, l'auteur, l'idée extérieure. La capture retombe
+donc en « aucun souvenir » après avoir été gardée. Une raison de garder qui ne
+mène nulle part est pire qu'une raison absente. Cas : `p-type-organisation-builtin`.
+
+**D. `N10-a` est démenti par les seuls cas qui la testent.** Elle demande de
+descendre la confiance quand trois souvenirs survivent. Le corpus a exactement
+deux cas à trois souvenirs, ce sont deux listes de courses sans rapport entre
+elles, `N10-d` les rend correctement à trois, et aucun des deux ne porte
+`needs_review`. La règle mettrait donc deux captures justes en validation. C'est
+la réponse à la question posée en marge de `N10-a` : elle n'est pas solide sur
+les cas précédents, et le corpus n'a aucun cas à quatre.
+
+**E. `N4-b` contre `N9-f`.** « appeler le client euh non oublie j'ai pas le
+temps » : `N4-b` envoie la décision d'annuler vers une note, `N9-f` dit qu'une
+autocorrection reprise dans le même souffle ne remplit pas le champ d'annulation.
+La seconde ne parle que du champ, mais les deux se lisent comme un désaccord sur
+le souvenir. Le corpus ne garde rien, les règles gardent une note.
+
+**F. `N1-a` promet plus qu'elle ne tient.** Son ALORS dit « garder la capture »,
+et sur un anniversaire nu `N6-d` conclut ensuite à aucun souvenir. Les deux sont
+compatibles, « garder » ne voulant dire ici que « ne pas s'arrêter en `N2` », mais
+la formulation se lit comme une promesse de souvenir. Défaut de rédaction, à
+corriger dans les neuf `N1`.
+
+**G. `G5-c` écrit « se nuance dans la note ».** La moitié graphe ne décide jamais
+s'il y a une note. La phrase empiète sur l'autre moitié et ne peut rien
+garantir. Défaut de rédaction.
+
+### 4. Les cas qu'aucune règle n'explique
+
+Quatre, tous à la frontière du sans-verbe.
+
+- `r3f-episodic-past-action-voisin` « Ma voiture a besoin d'un lavage » : une
+  action à faire énoncée comme un état, avec un verbe conjugué. `N1-h` et `N1-i`
+  exigent l'absence de verbe conjugué, aucune raison de garder ne correspond,
+  aucune raison de ne rien garder non plus, donc la capture tombe en `N4-a` qui
+  accepte l'action « sous n'importe quelle forme » et en fait une tâche. Le
+  corpus dit rien.
+- `ord-en-06` « forgot to water the balcony plants before leaving for work » :
+  ni faite ni clairement à faire. Aucune règle ne dit ce que devient une corvée
+  oubliée.
+- `g-routine-courses-tronque` « pain beurre oeufs » : `N1-i` ferme
+  explicitement la porte, donc rien. Accord avec le corpus, mais c'est un accord
+  par fermeture et il se paie sur une liste de courses dictée.
+- `ez-weather-fr` « Il pleut » : aucune règle ne dit de ne rien garder, c'est
+  l'épuisement du graphe qui répond. Accord par épuisement.
+
+### Ce que ça dit de la suite
+
+Le rouge attendu est bien là, et il est concentré : la moitié des cas « aucun
+souvenir » a changé de camp, et une seule règle en amont (`N2-d`) suffit à
+annuler la décision principale du 29/08. Corriger `N2-d` avant d'écrire le
+prompt vaut plus cher que tout le reste de cette liste.
+
+### Ce qui a été fait le 30/08 après la confrontation
+
+**`N2-d` retirée**, pour la raison donnée en A ci-dessus. Rien ne la remplace :
+l'avancement et le statut retombent sur `N7-c`, et la marge d'interprétation
+qu'on rend au modèle est assumée.
+
+**46 cas réétiquetés** dans le corpus. Ils portent tous un `⚠` dans leur `why`,
+ce qui les fait remonter en tête de l'échantillon de `revue.py` : la relecture
+humaine est due et le harnais la réclamera tout seul. `valide` a été retiré sur
+les 25 qui le portaient, l'arbitrage précédent ne couvrant plus la nouvelle
+étiquette.
+
+Trois choses n'ont volontairement PAS été assertées sur ces cas. `event_date` sur
+les épisodes passés, que `N7-d` garantit pourtant : les vingt dates se calculent à
+la main et une passe séparée coûtera moins cher qu'une erreur silencieuse.
+`ephemeral` sur les six nouvelles tâches, tant que `N9-a` n'est pas repris.
+`proj` sur les comptes rendus d'avancement, qui relève de la moitié graphe.
+
+**Sept cas restent ouverts** et n'ont pas été touchés, parce qu'aucun d'eux ne se
+tranche mécaniquement : `g-progress-decision-fr` (une décision enfouie dans un
+compte rendu), `g-progress-metric-en` (un résultat mesurable dans le même),
+`p-type-organisation-builtin` (contradiction C, la prise de position sans nœud
+d'accueil), `r1f-action-annulee-dicte` (contradiction E), `g-link-restaurant-map-fr`
+et `res-place-fr` (contradiction B), `ord-en-06` (la corvée oubliée, liste 4).
+
+### Ce que le code fait de l'éphémère, et que les règles interdisent
+
+Vérifié dans `routing.rs` en cherchant à quoi sert le drapeau. Il ne se contente
+pas d'ajouter un rappel de 48 h.
+
+- Quand `is_ephemeral` est vrai, chaque souvenir qui n'est ni `task` ni `event`
+  est SAUTÉ, donc la note ou l'épisode n'est jamais écrit.
+- Si la capture n'a par ailleurs ni entité, ni projet, ni souvenir durable, une
+  sortie rapide s'exécute : il ne reste que l'intention, qui expire en 48 h.
+- Le garde-fou `laisse_une_trace`, qui recopie le contenu brut quand une capture
+  n'a rien laissé, compte `is_ephemeral` comme une trace. Il ne rattrape donc
+  rien ici.
+
+`N9-b` dit l'inverse mot pour mot : ni une note ni un épisode ne sont jamais
+éphémères, et dans ces deux cas il faut REMETTRE LE DRAPEAU À FAUX. Le code garde
+le drapeau et jette le souvenir. Un épisode que le modèle marque éphémère à tort
+est donc perdu sans trace, et le harnais de langue surveille déjà cette bascule
+sous le nom « action perdue ».
+
+Ce n'est pas une question de règle, c'est un défaut de code, et il devient plus
+probable depuis que `N7-c` envoie en épisode tout ce que le modèle a l'habitude
+de marquer éphémère.

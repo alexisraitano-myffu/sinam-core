@@ -161,13 +161,17 @@ pas « avant toute analyse », elle s'exécute à la demande.
 
 ### N2 — les raisons de ne rien garder
 
-> La corvée déjà faite ne figure plus ici : elle donne un épisode, voir `N7-c`.
-> Son ancien identifiant `N2-a` reste vacant.
+> Deux raisons ont quitté cette liste et leurs identifiants restent vacants.
+> `N2-a`, la corvée déjà faite, qui donne un épisode : voir `N7-c`. `N2-d`,
+> l'avancement et le statut, qui donnaient tous deux « aucun souvenir » alors que
+> `N7-c` prend la même capture en épisode ; placée en amont, elle gagnait par le
+> rang et annulait `N7-c` pour toute corvée formulée comme un statut (« c'est
+> fait », « la pression des pneus est faite »). Un compte rendu d'avancement
+> laisse donc un épisode, et son entrée de projet part côté graphe.
 
 | # | QUAND | SI | ALORS | Étiquettes |
 |---|---|---|---|---|
 | N2-b | Après avoir lu toutes les raisons de garder sans qu'aucune ne corresponde. | La capture énonce une HABITUDE ou un TRAIT biographique (« je fais du yoga le jeudi depuis deux ans », « j'ai fait du piano enfant »), qu'elle dise ou non quand ça a commencé. | Ne produire aucun souvenir. Dire QUAND l'habitude a commencé n'en fait pas un épisode. L'autre moitié en fait un fait durable et périssable. | préférence · exemples |
-| N2-d | Après avoir lu toutes les raisons de garder sans qu'aucune ne corresponde. | La capture rapporte un AVANCEMENT sur un projet en cours, ou un STATUT (« c'est fait », « c'est envoyé », « j'ai déjà mangé »). | Ne produire aucun souvenir : rien n'a été vécu, rien ne reste à faire. | préférence · exemples |
 | N2-e | Après avoir lu toutes les raisons de garder sans qu'aucune ne corresponde. | La capture se reformule ENTIÈREMENT en triplets sujet-prédicat-objet, sans rien qui reste. | Ne produire aucun souvenir. Cela couvre le cas courant de l'attribut simple, « X a / est / fait Y » (« Marie a un chat Gipsy », « Pierre travaille chez Acme »). Ce qu'énonce la capture part quand même en fait côté graphe : c'est la NOTE qui n'est pas due, jamais l'information. | garantie · prompt |
 | N2-f | Après avoir lu toutes les raisons de garder sans qu'aucune ne corresponde. | La capture contient une URL et, une fois l'URL retirée mécaniquement, il ne reste AUCUN mot ; ou bien les mots restants appartiennent à la fiche d'une chose qui a déjà sa propre identité (« le restaurant Chez Léon, très bon »). | Ne produire aucun souvenir. L'URL est enregistrée par l'autre moitié dans tous les cas et ne concurrence jamais la note : un lien commenté rend les DEUX. | garantie · prompt |
 
