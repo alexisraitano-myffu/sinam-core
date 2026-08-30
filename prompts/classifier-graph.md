@@ -82,6 +82,12 @@ comptable", "le kiné", "la hotte", "the accountant", "the kids". The only way o
 mention that turns it into an identity — "le comptable" is a role, "le cabinet Fiducial" is an
 identity. A card named by a role would gather the facts of everyone who ever held it.
 
+A LIST OF THINGS TO BUY GIVES NO CARD AT ALL, not one per item and not one for the list — "beurre
+oeufs farine chocolat noir", "almond milk, Greek yogurt, blueberries, granola". Every item is a
+common noun, bought and consumed, and a card per grocery would bury the graph under the week's
+shopping. What surrounds the list still gets its cards as usual: "des pâtes pour le dîner avec
+Marcel" gives Marcel, never the pasta.
+
 FOR A PLACE, A SHOP OR A CONSUMED OBJECT, ONE TEST SETTLES ALL THREE RUNGS: is the thing WHAT THE
 CAPTURE IS ABOUT, or a circumstantial detail of what happens in it? What it is about → card or
 proposal. Circumstantial detail → no card. The brand name never decides; the position in the
@@ -124,9 +130,21 @@ for THIS entity. An ambiguous name, often an approximate transcription, must nev
 project — when in doubt, `"type": "concept"`.
 
 
-═══ 3. A FACT, OR A RELATION? ═══
+═══ 3. WHAT DOES THE CAPTURE SAY ABOUT EACH CARD? ═══
 
-A RELATION links two NAMED cards. A FACT describes one card with a LITERAL value.
+TAKE THE CARDS FROM QUESTION 1 ONE AT A TIME and ask what THIS capture asserts about THAT one.
+Question 4 decides afterwards whether what you find is durable enough to keep, and it is the only
+thing allowed to discard it: do not anticipate it here, and do not skip a card because you expect
+it to. A capture rarely names someone for nothing.
+
+WHAT COUNTS AS SOMETHING SAID: a tie to the author or to another card; a stance, a judgement or a
+preference they expressed; a recommendation they made; a property the capture states of them.
+"Mark suggested pushing the launch date" is Mark's position on the launch. "the sourdough was
+amazing but the croissants were disappointing" is two judgements about the bakery, and both belong
+on the bakery's card. Naming the card and leaving it empty records that a word was mentioned.
+
+Then write what you found in one of two shapes. A RELATION links two NAMED cards. A FACT describes
+one card with a LITERAL value.
  · The object is a card you ALSO emit → emit the RELATION ALONE, never a fact repeating it.
    "Pierre travaille chez Acme", Acme being a card → relation, no fact.
  · The object is a literal value → emit a FACT. "Claire habite à Lyon" → fact lives_in "Lyon".
@@ -168,6 +186,14 @@ Emit a fact ONLY when what it would say will still be TRUE next month AND still 
 who never reads this capture. Otherwise emit none. Never restate the capture's own sentence as a
 fact, never store a one-off action ("bought bread", "went for a run") or an intention, and never
 invent a value to avoid leaving a field empty.
+
+THE SCENE PASSES, THE TIE REMAINS. An evening, a meal, a conversation is never durable in itself,
+but what it REVEALS about the people in it almost always is, and discarding the capture because the
+evening was one-off loses that with it. "super soirée barbecue chez Antoine et Clara" says two
+people share a home and receive the author; "soirée avec Julie et Romain, on a testé le resto
+mexicain" says who the author's friends are. Emit the TIE, as a relation between the cards, never
+the evening as a fact. A STANCE works the same way: "Dave thinks we should cut the marketing budget
+by half" leaves a position on Dave's card that outlives the conversation it was said in.
 
 NEVER A MOOD OR A PSYCHIC STATE, the author's or anyone else's: "feels overwhelmed", "is
 stressed", "was sad". A lasting PHYSICAL condition is a different thing and stays allowed: "has
@@ -296,8 +322,14 @@ project even without the word — "climb a 7a", "learn Japanese", "renovate the 
 
 ═══ BEFORE YOU ANSWER ═══
 
-Check that no claim appears in both `facts` and `obsoleted_facts`, and drop one of the two if it
-does. Emitting nothing is the normal answer for most captures.
+RE-READ YOUR `entities` LIST ONE CARD AT A TIME. Questions 3 and 6 apply to every one of them, and
+a card you settled early has not necessarily been through them: what does the capture say about
+this one, and does a link point at it? A card carrying a name and nothing else is the one failure
+this pass can produce entirely on its own, because the capture it came from will never be read
+again to repair it. THE REPAIR IS TO FILL THE CARD, never to drop it.
+
+Then check that no claim appears in both `facts` and `obsoleted_facts`, and drop one of the two if
+it does.
 
 AND WHEREVER TWO ANSWERS DEFEND THEMSELVES EQUALLY AND NOTHING SEPARATES THEM: KEEP RATHER THAN
 DISCARD, PROPOSE RATHER THAN ASSERT. Never settle a doubt by deleting. A card proposed costs one
@@ -305,14 +337,15 @@ confirmation; a card withheld costs the thing itself.
 
 <!-- DATES:DEBUT — bloc partagé mot pour mot par les deux moitiés.
      Un contrôle du harnais échoue si les deux copies divergent d'un caractère. -->
-Resolve every relative date to an absolute one. Today's date is: {today}.
+Resolve every relative date to an absolute one.
+Today is {today}
 THE TENSE DECIDES THE DIRECTION, and nothing else does.
  · "today", "tomorrow", "yesterday", "this morning", "last night" resolve straight off the date
    above.
- · A BARE WEEKDAY ("Tuesday", "mardi") is its NEXT occurrence, and today itself is not it: if
-   today is a Monday, "Tuesday" is TOMORROW, not in eight days. Only an explicit "next Tuesday"
-   skips a week. A PAST tense makes it the LAST one instead ("I saw her Tuesday", "on a mangé des
-   pâtes jeudi soir"): count BACKWARDS from today to the nearest day bearing that name.
+ · A BARE WEEKDAY ("Tuesday", "mardi") IS READ OFF ONE OF THE TWO ROWS ABOVE, and never counted
+   out by hand: a present or future tense takes the NEXT row, a past tense takes the LAST row ("I
+   saw her Tuesday", "on a mangé des pâtes jeudi soir"). Only an explicit "next Tuesday" skips a
+   further week beyond the row. Today is never the answer, which is why neither row contains it.
  · A DAY AND MONTH WITH NO YEAR ("le 12 juin", "on the 24th") takes the year the tense asks for.
    Past tense → the most recent one already gone: "on s'est mariés le 12 juin" means the 12 June
    BEFORE today, and if the 12 June of the CURRENT year is already past, that is the one — never

@@ -43,6 +43,12 @@ list in full: ONE match is enough, and you then stop reading the gate entirely a
 NOTHING in the second list can undo a match in the first — that is why no exception is written
 inside a line it would contradict.
 
+THE DEFAULT IS TO KEEP. Dropping a capture requires A LINE of the second list that names its
+shape. Your own sense that a capture is slight, banal, too short or not worth much is NEVER a
+reason, and no line grants it: "Bonne journée aujourd'hui", "Already ate", "J'ai relu mes notes de
+la semaine" match nothing in either list, and all three are therefore KEPT. A capture dropped
+without a line to point at leaves nothing behind and nobody ever notices it went.
+
 JUDGE THE WHOLE CAPTURE, NEVER ITS FIRST CLAUSE. Read both lists against EVERY proposition the
 capture makes, not against the one it opens with. A chore, a status or a routine stated first
 decides nothing for what follows it: "replaced the AC filter today, next replacement due in
@@ -75,15 +81,27 @@ October" carries a DATE in its second half, and that date opens the gate for the
  · A THING THE AUTHOR WAS WAITING ON HAS MOVED, said with WHEN ("le devis est parti ce matin",
    "the quote went out this morning"). A chore the author simply did is not one of these — it is
    kept, but by the episode row, not here.
- · THE AUTHOR'S OWN TAKE ON A LINK THAT IS THE THING — an article, a video, a paper, a thread
-   ("great read on how memory consolidates", "super intéressant sur la mémoire", "à lire pour le
-   projet"). No summary of the page reproduces it.
- · NO CONJUGATED VERB, in either of these two shapes and ONLY these two.
+ · WHAT THE AUTHOR SAID ABOUT A LINK THAT HAS NOTHING BUT A CONTENT BEHIND IT — an article, a
+   video, a podcast, a paper, a thread, a tutorial, a guide, a recipe, a reading list, a review
+   ("great read on how memory consolidates", "super intéressant sur la mémoire", "super guide pour
+   planter les tomates", "check the pruning shears review", "à lire pour le projet"). Their words
+   have nowhere else to land, since nothing exists behind that address but the text, and no summary
+   of the page reproduces them. THE CONTRAST, and the second list takes it: a link opening onto
+   something with ITS OWN existence apart from the page — a restaurant, a shop, a company, a board,
+   a tool ("le restaurant Chez Léon, très bon", "the Linear board, that's where we track
+   everything"). There the words land on that thing's card, and the note is not owed.
+ · NO CONJUGATED VERB, in any of these three shapes and ONLY these three.
    BARE INFINITIVES, alone or under a name ("Léa : changer les serrures, appeler l'électricien",
    "call the plumber, book the van") → they are intentions, go straight to row 1.
+   A LIST OF THINGS TO GET, two items or twenty, with or without a heading ("beurre oeufs farine
+   chocolat noir et du papier cuisson", "almond milk, Greek yogurt, blueberries", "groceries list:
+   trash bags, oat milk", "peinture rouleau de masquage colle à bois") → the verb is "buy" and
+   everyone leaves it out; go straight to row 1. A SINGLE consumable counts too ("joint silicone
+   pour la salle de bain"). This is one of the most frequent captures there is and it survives its
+   errand: it is a list to tick off, never a passing reminder.
    A STATE OF THE WORLD whose subject is an ORDINARY THING, never a named person, company or place
    ("cartons au sous-sol", "clés chez le voisin", "boxes in the basement") → go straight to row 4.
-   No other verbless shape keeps anything on this ground: these two and nothing else.
+   No other verbless shape keeps anything on this ground: these three and nothing else.
 
 ── CLOSES THE GATE — read ONLY if nothing above matched. Then `memories` is EMPTY ──
 
@@ -96,9 +114,10 @@ October" carries a DATE in its second half, and that date opens the gate for the
    "Pierre travaille chez Acme"). What it states still becomes a fact on the other side: it is the
    NOTE that is not owed, never the information.
  · A URL with NO words left once the URL is stripped, mechanically; or one whose remaining words
-   belong on the card of a thing that already has its own identity — a place, a shop, a tool, a
-   company ("le restaurant Chez Léon, très bon", "the Linear board, that's where we track
-   everything"). They will be found again there. The URL is recorded by the other pass either way
+   belong on the card of a thing that already has its own identity AND THAT THE SENTENCE NAMES — a
+   place, a shop, a tool, a company ("le restaurant Chez Léon, très bon", "the Linear board, that's
+   where we track everything"). An article, a tutorial, a guide or a review names no such thing,
+   and the first list has already taken it. They will be found again there. The URL is recorded by the other pass either way
    and never competes with the note: a commented link yields BOTH.
 
 Nothing matched in EITHER list → the capture is KEPT. Go to the table.
@@ -307,14 +326,15 @@ DISCARD, ASK RATHER THAN ASSERT. Never settle a doubt by returning nothing.
 
 <!-- DATES:DEBUT — bloc partagé mot pour mot par les deux moitiés.
      Un contrôle du harnais échoue si les deux copies divergent d'un caractère. -->
-Resolve every relative date to an absolute one. Today's date is: {today}.
+Resolve every relative date to an absolute one.
+Today is {today}
 THE TENSE DECIDES THE DIRECTION, and nothing else does.
  · "today", "tomorrow", "yesterday", "this morning", "last night" resolve straight off the date
    above.
- · A BARE WEEKDAY ("Tuesday", "mardi") is its NEXT occurrence, and today itself is not it: if
-   today is a Monday, "Tuesday" is TOMORROW, not in eight days. Only an explicit "next Tuesday"
-   skips a week. A PAST tense makes it the LAST one instead ("I saw her Tuesday", "on a mangé des
-   pâtes jeudi soir"): count BACKWARDS from today to the nearest day bearing that name.
+ · A BARE WEEKDAY ("Tuesday", "mardi") IS READ OFF ONE OF THE TWO ROWS ABOVE, and never counted
+   out by hand: a present or future tense takes the NEXT row, a past tense takes the LAST row ("I
+   saw her Tuesday", "on a mangé des pâtes jeudi soir"). Only an explicit "next Tuesday" skips a
+   further week beyond the row. Today is never the answer, which is why neither row contains it.
  · A DAY AND MONTH WITH NO YEAR ("le 12 juin", "on the 24th") takes the year the tense asks for.
    Past tense → the most recent one already gone: "on s'est mariés le 12 juin" means the 12 June
    BEFORE today, and if the 12 June of the CURRENT year is already past, that is the one — never

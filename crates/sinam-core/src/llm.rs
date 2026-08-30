@@ -169,11 +169,31 @@ impl ClassifyHalf {
 ///
 /// An unparseable date falls back to the bare string: a context that states a
 /// wrong weekday is worse than one that states none.
+///
+/// Naming the weekday fixed the week but not the day. Measured on 2026-08-30
+/// over 495 cases: 17 captures landed exactly one day late, the model
+/// reasoning "Monday the 13th, so Friday is the 18th". So it no longer counts
+/// at all — both surrounding weeks are spelled out and it reads the answer off
+/// a row. Neither row contains today, which is what the DATES block means by
+/// "today itself is never the answer".
 fn today_with_weekday(today: &str) -> String {
-    match chrono::NaiveDate::parse_from_str(today, "%Y-%m-%d") {
-        Ok(d) => format!("{today} (a {})", d.format("%A")),
-        Err(_) => today.to_string(),
-    }
+    let Ok(d) = chrono::NaiveDate::parse_from_str(today, "%Y-%m-%d") else {
+        return today.to_string();
+    };
+    let jour = |n: i64| {
+        let x = d + chrono::Duration::days(n);
+        format!("{} {}", x.format("%A"), x.format("%Y-%m-%d"))
+    };
+    let suivants: Vec<String> = (1..=7).map(jour).collect();
+    let precedents: Vec<String> = (1..=7).rev().map(|n| jour(-n)).collect();
+    format!(
+        "{today} (a {}).\n\
+         NEXT occurrence of each weekday, counting from tomorrow: {}.\n\
+         LAST occurrence of each weekday, counting back from yesterday: {}.",
+        d.format("%A"),
+        suivants.join(", "),
+        precedents.join(", "),
+    )
 }
 
 impl Brain {
@@ -942,17 +962,24 @@ mod tests {
     }
 
     #[test]
-    #[test]
-    fn today_carries_its_weekday_and_a_bad_date_carries_nothing() {
-        // 2026-07-13 is the Monday the harness freezes on. The weekday is what
-        // makes "Tuesday" resolve to the 14th instead of the 21st.
-        assert_eq!(today_with_weekday("2026-07-13"), "2026-07-13 (a Monday)");
-        assert_eq!(today_with_weekday("2026-07-19"), "2026-07-19 (a Sunday)");
+    fn today_carries_the_two_weeks_around_it_and_a_bad_date_carries_nothing() {
+        // 2026-07-13 is the Monday the harness freezes on. The two rows are what
+        // make "vendredi" resolve to the 17th and "jeudi" past to the 9th; the
+        // model used to answer the 18th and the 10th by counting them out.
+        let lundi = today_with_weekday("2026-07-13");
+        assert!(lundi.starts_with("2026-07-13 (a Monday).\n"));
+        assert!(lundi.contains("counting from tomorrow: Tuesday 2026-07-14, "));
+        assert!(lundi.contains("Friday 2026-07-17, Saturday 2026-07-18, Sunday 2026-07-19, Monday 2026-07-20."));
+        assert!(lundi.contains("counting back from yesterday: Monday 2026-07-06, "));
+        assert!(lundi.contains("Thursday 2026-07-09, Friday 2026-07-10, Saturday 2026-07-11, Sunday 2026-07-12."));
+        // Neither row may contain today: today is never the answer to a bare weekday.
+        assert_eq!(lundi.matches("2026-07-13").count(), 1);
         // A context that states a wrong weekday is worse than one that states none.
         assert_eq!(today_with_weekday("hier"), "hier");
         assert_eq!(today_with_weekday(""), "");
     }
 
+    #[test]
     fn openai_request_drops_cache_control_and_flattens_system() {
         let (base, rx) = stub_server(vec![OA_FILLED]);
         let cfg = cfg_provider(base, LlmProvider::OpenAiCompatible);
