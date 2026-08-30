@@ -490,3 +490,46 @@ qu'il faudrait reprendre, et il faudrait alors basculer 52 étiquettes du corpus
 Et dans tous les cas, corriger d'abord le routage : normaliser le drapeau à faux
 à l'entrée quand le souvenir n'est ni tâche ni événement, plutôt que de filtrer
 souvenir par souvenir, et cesser de le compter comme une trace.
+
+---
+
+## Une règle sur-lue, corrigée le 30/08 : `N6-d`
+
+Trouvée en préparant la réécriture du prompt, en confrontant le nœud `N6` au
+corpus.
+
+La remarque du 29/08 disait deux choses : « si il est impossible de savoir si
+c'était un événement ou un fait daté, en dessous du seuil de confiance et on
+demande », puis « normalement la récurrence des anniversaires sera portée dans le
+graphe par les faits sur les fiches de la personne concernée ». La première
+moitié parle du SOUVENIR, la seconde de la RÉCURRENCE.
+
+J'ai écrit la seconde comme si elle parlait du souvenir, et `N6-d` a conclu qu'une
+date d'anniversaire nue ne laissait aucun souvenir. Trois conséquences, toutes
+fausses.
+
+- Elle contredisait `N6-f`, écrite depuis la PREMIÈRE moitié de la même remarque,
+  dans le même nœud : l'indiscernable choisit l'événement et descend la confiance.
+- Elle contredisait trois arbitrages explicites du corpus, du 25/08 (« trop
+  ambigus pour trancher, on demande à l'utilisateur »), du 27/08 (« la file de
+  validation est le comportement voulu, c'est l'étiquette qui avait tort ») et du
+  29/08 (« le modèle a raison, deux souvenirs, récurrence à faire valider »).
+- Elle rouvrait le trou que le prompt fermait explicitement : un fait n'atteint
+  aucune file de validation, donc retirer la note répond à la question en
+  silence.
+
+**Corrigé.** Une date d'anniversaire nue donne un `event`, récurrence à FAUX,
+confiance sous le seuil. Ce qui revient chaque année est le fait `has_birthday`
+sur la fiche, pas une occurrence au calendrier.
+
+Ce que le corpus en dit une fois la règle corrigée : sept cas passent de
+`recurring` vrai à faux, tous des anniversaires de personnes. Deux gardent vrai
+et c'est juste, ce sont les deux seules occasions qui reviennent EN TANT
+QU'OCCASIONS : « on s'est mariés le 12 juin » et « l'anniversaire de mariage de
+mes parents est le 8 août ». `N6-g` les nommait déjà.
+
+**Ce que ça apprend sur la méthode.** Une remarque en marge qui porte sur deux
+champs différents se relit comme si elle n'en visait qu'un. Le garde-fou n'est
+pas de relire la remarque, c'est de confronter la règle au corpus avant de
+l'écrire dans le prompt : les trois arbitrages étaient là depuis cinq jours et
+disaient non.
