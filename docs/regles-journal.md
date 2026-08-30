@@ -837,3 +837,68 @@ C'est une limite à connaître avant d'écrire une quatrième formulation.
 
 Les quatre autres sont la frontière épisode, une date, et Axiom qui vient du
 contexte et non de la capture.
+
+## Le prompt tiré des règles seules, et les cinq règles qu'il a révélées (30/08)
+
+Alexis a rappelé l'ordre : **les règles sont le maître, le prompt et le corpus en
+dérivent**. Le prompt de production s'en était éloigné sans que personne le
+mesure. Mesuré : en séparant dans chaque moitié l'incompressible (rôle, langue,
+schéma JSON, bloc DATES) du corps qui porte les règles, la moitié note portait
+20 % de matière sans règle derrière elle, et **la moitié graphe 55 %**. C'est la
+moitié qui s'était effondrée le matin même.
+
+Un prompt a donc été écrit depuis le seul document, nœud par nœud dans l'ordre du
+graphe de décision, avec une seule décision de rédaction et elle vient du
+document : **les 8 règles `préférence` écrites avec de la marge, les 80
+`garantie` au serré**. L'étiquette n'avait jamais servi à rédiger.
+
+Sur 150 cas : 121 conformes contre 132 pour la production. Sept points de moins,
+pour 26 % de texte en moins.
+
+### Ce que les onze cas perdus ont appris
+
+Ils ne disaient pas « le prompt long est meilleur ». Ils disaient **où le
+document est muet**. Cinq règles en sont sorties, toutes écrites dans
+`regles.md`.
+
+**`G4-f`, et c'est la plus importante.** `G4-e` disait « proposer » sans jamais
+dire COMMENT on propose. Le modèle ne choisit rien : il pose `evidence_strength`
+et `persistence_value`, et une porte en aval dérive la destination. `explicit`
+asserte dès la persistance 2, `implicit` n'asserte jamais quelle que soit la
+persistance, `hedged` non plus. « Proposer un fait » s'écrit donc
+`evidence_strength: "implicit"` et rien d'autre ne le fait. Une règle qui énonce
+un résultat sans son encodage est **inapplicable**, et le prompt de production
+compensait en silence. La ligne est placée AVANT `G4-e`, qui en dépend.
+
+**`N1-j`, un trou de rang dans les règles elles-mêmes.** `N7-c` promet de garder
+tout moment déjà vécu, sans condition. Elle est en aval de la porte, et la liste
+des raisons de garder n'avait aucune ligne pour « l'auteur raconte une action
+passée ». Sa promesse était donc inatteignable pour toute corvée passée que rien
+d'autre ne retenait. Même forme que `N2-d` contre `N7-c` le mois dernier.
+
+Puis **`N2-g`** (une négation ou une absence ne doit pas de note, c'est `N2-e`
+sous une autre forme), **`N7-g`** (la durée ne transforme pas un état en trait),
+**`G3-h`** (les liens de famille prennent le prédicat précis, jamais le
+générique), et `G5-d` qui nomme désormais `renamed_to` : sans le champ, elle
+n'émettait rien.
+
+Régénéré depuis le document augmenté : **136 conformes contre 132**, à 5 311
+tokens par moitié contre 6 795. La version courte repasse devant.
+
+### Deux erreurs de rendu, et une leçon sur la mesure
+
+Les cas qui résistaient ensuite étaient presque tous des anniversaires, et
+c'étaient des fautes de traduction, pas des règles manquantes. Le bloc
+anniversaire était placé APRÈS le test « l'auteur y assiste-t-il » : une date
+d'anniversaire nue n'étant assistée par personne, le modèle sortait du nœud avant
+de l'avoir lu. Remonté en tête. Et « descendre la confiance sous le seuil » se
+lisait comme « poser 0,7 », c'est-à-dire le seuil exactement : le prompt nomme
+désormais la valeur, 0,5.
+
+**La leçon de méthode est ailleurs et elle est plus coûteuse.** Entre deux
+versions séparées par trois éditions ciblées, deux des trois cas perdus étaient
+dans des zones non touchées, à température 0. Le harnais a donc un bruit propre
+qui n'a JAMAIS été mesuré, et des écarts de deux ou trois points ont été
+commentés toute la journée comme s'ils signifiaient quelque chose. Les cinq
+baselines `syn224-essai1..5` ne servent pas à l'estimer : leurs empreintes de
+prompt diffèrent, ce sont cinq prompts et non cinq lancers.
