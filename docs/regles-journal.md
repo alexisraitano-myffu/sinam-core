@@ -678,3 +678,162 @@ le test, jamais le compte, et un nombre n'est pas en lui-même un motif de doute
 La question sur quatre reste sans réponse faute de cas, et c'est honnête de le
 dire : le corpus n'en a aucun. Si le comportement à quatre compte, il faut
 écrire le cas d'abord.
+
+## La première mesure du prompt réécrit (30/08)
+
+Les 495 cas passés dans les deux moitiés réécrites : 352 conformes. Le chiffre
+brut ne dit rien, puisque les étiquettes ont bougé le même jour. Ce qui compte
+est la comparaison à étiquette égale, obtenue en renotant la passe de la veille
+avec les étiquettes d'aujourd'hui : sur les 230 cas communs, **112 conformes
+avant, 134 après**. 47 cas corrigés, 31 cassés, 65 faux des deux côtés. Le
+retrait de l'axe éphémère n'explique que six des corrections.
+
+### Ce que la mesure a trouvé, et qui n'était pas visible en relisant
+
+**La moitié graphe émettait trente pour cent de moins qu'avant.** 259 fiches
+tombées à 178, 60 faits à 42, 42 relations à 30. Trente-trois cas rendaient un
+graphe entièrement vide : les fiches naissaient, avec `facts: []` et aucune
+relation. Antoine et Clara, chez qui la capture situe un barbecue, existaient
+comme deux noms sans rien autour.
+
+Deux causes, et les deux sont le problème de rang appliqué à ma propre
+réécriture.
+
+La première est un bloc que j'avais ajouté, `BEFORE YOU ANSWER`, dont une phrase
+disait « émettre rien est la réponse normale pour la plupart des captures ».
+L'ancien prompt tenait ce discours deux fois, le mien quatre, et la quatrième
+était la dernière chose lue avant de générer. Une consigne de sobriété en
+position finale ne pondère pas les autres, elle les remplace.
+
+La seconde est un trou. Mes questions 1 et 2 demandaient quelle fiche existe et
+de quel type. La 3 demandait sous quelle FORME l'écrire, fait ou relation. Aucune
+ne demandait **ce que la capture dit** de la fiche. Le modèle répondait aux
+questions posées.
+
+Corrigé en trois endroits. La question 3 devient « what does the capture say
+about each card », prend les fiches une par une et interdit d'anticiper le filtre
+de la question 4. La question 4 gagne le pont qui lui manquait, « the scene
+passes, the tie remains » : une soirée n'est pas durable, le lien qu'elle révèle
+l'est presque toujours, et c'est lui qu'il faut émettre. Le bloc de fin perd sa
+phrase de sobriété et devient une relecture fiche par fiche, avec sa consigne
+explicite : la réparation est de remplir la fiche, jamais de la retirer.
+
+**La porte se fermait sur deux formes de capture très courantes.** Vingt-six cas
+ne rendaient rien du tout, et vingt sur vingt-six tenaient en deux familles : le
+lien nu commenté (« super intéressant sur la mémoire ») et la liste de courses
+nue (« beurre oeufs farine chocolat noir »).
+
+La liste était un vrai trou : ma porte n'admettait que deux formes sans verbe,
+l'infinitif nu et l'état du monde, et concluait par « ces deux et rien d'autre ».
+La liste de courses est une troisième forme, et le corpus est unanime dessus,
+toutes étiquetées tâche les 29 et 30/08. Elle est écrite comme telle.
+
+Le lien commenté est un cas de rang plus subtil. La ligne qui l'ouvrait existait,
+mais elle disait « a link that is the thing », un terme repris de la moitié
+graphe et défini nulle part dans la moitié note. Le modèle ne pouvait pas
+trancher et tombait dans la liste qui ferme. La ligne énumère maintenant les
+formes (article, vidéo, tutoriel, guide, liste de lecture, critique) et porte
+elle-même sa frontière avec le lien qui ouvre sur une chose ayant sa propre
+existence. Une frontière écrite dans la ligne qui gagne, plutôt que dans celle
+qui perd.
+
+**Le jour de la semaine tombait un cran trop loin.** Dix-sept cas. Aujourd'hui
+est le lundi 13/07, le prompt le disait, et « avant vendredi » revenait au 18 au
+lieu du 17, « jeudi soir » au 10 au lieu du 9. Nommer le jour avait réglé la
+semaine le 25/08 ; ça ne réglait pas le jour, parce que le modèle comptait encore
+lui-même. Il ne compte plus : `today_with_weekday` écrit les deux semaines qui
+encadrent aujourd'hui, la suivante à partir de demain et la précédente jusqu'à
+hier, et le bloc DATES dit de lire la réponse dans une ligne. Aucune des deux ne
+contient aujourd'hui, ce qui rend structurelle la règle « aujourd'hui n'est
+jamais la réponse ».
+
+### Ce que les correctifs ont donné
+
+Les 89 cas en écart sur ces trois familles, rejoués : 41 entièrement conformes,
+et le total des écarts sur le lot passe de 127 à 70.
+
+| famille | corrigés |
+|---|---|
+| dates | 20 sur 36, et le décalage d'exactement un jour tombe de 17 cas à 3 |
+| graphe vide | 17 sur 33 |
+| porte fermée | 19 sur 26 |
+
+Un seul écart nouveau était de ma faute : la porte ouvrant enfin sur les listes,
+la moitié graphe fabriquait une fiche par article de courses. C'est la
+sur-extraction connue de la moitié graphe isolée, qui se manifeste dès qu'on lui
+retire un frein. Un garde est écrit en question 1 : une liste d'achats ne donne
+aucune fiche, ni par article ni pour la liste, et ce qui l'entoure garde les
+siennes.
+
+## Cinq étiquettes qui contredisaient les mots d'Alexis (30/08)
+
+Trouvées en cherchant autre chose, dans les cas dont le `why` cite Alexis
+verbatim. Cinq portaient un axe qui disait l'inverse de la phrase citée juste
+au-dessus.
+
+| cas | ce qu'Alexis a écrit | ce que l'axe disait |
+|---|---|---|
+| `r3f-episodic-past-action` | « pas besoin de validation on enregistre en episode » | `needs_review: true` |
+| `r3g-voisin-deja-vecu` | « pas besoin de validation » | `needs_review: true` |
+| `p-dur-action-ponctuelle-vs-durable` | « pas de validation necessaire » | `needs_review: true` |
+| `g-routine-courses-tronque` | « une tache a créer, avec validation » | `note: false`, aucune tâche |
+| `r3f-episodic-past-action-voisin` | « on veux une tache […] on veut une validation » | `note: false`, `needs_review: false` |
+
+Les cinq datent de la passe de réétiquetage du 30/08 au matin, celle qui a retiré
+l'éphémère. Sur les trois premiers, le drapeau a été posé exactement à l'envers
+de la décision. Les axes disent maintenant ce qui est écrit ; `valide` n'a pas
+été touché.
+
+**Ce que ça apprend.** Trois des huit écarts de confiance mesurés le matin même
+n'étaient pas des écarts : le modèle rendait la bonne réponse et l'étiquette
+était fausse. Une passe de réétiquetage qui touche un axe en touche d'autres par
+ricochet, et rien ne le signale. Le garde est bon marché et il n'existait pas :
+quand un `why` cite l'utilisateur entre guillemets, les axes doivent dire la même
+chose que la citation, et ça se vérifie par script.
+
+### Le second tour, et ce que le corpus demandait sans pouvoir l'obtenir
+
+Les 24 cas qui résistaient après le premier tour, regardés un par un, se
+répartissaient en quatre causes et deux d'entre elles accusaient l'étiquette.
+
+**Un fait attendu sans fiche où le poser.** Neuf captures demandaient
+`facts_min: 1` alors que tous leurs acteurs sont des rôles ou des noms communs :
+le boulanger, le conducteur de travaux, le voisin, la mutuelle, le kid, le réseau
+invité, les enfants, le Paracétamol déjà exclu par `no_entity`. La règle « un nom
+commun ou un rôle n'obtient jamais de fiche » est validée et elle interdit
+précisément la fiche sur laquelle le fait devrait atterrir. Arbitrage d'Alexis le
+30/08 : « pas de fait la dessus ». `facts_min` retiré sur les huit, la capture
+restant mesurée côté note. `ordinary-comptable-dictation` est resté en dehors,
+son fait ayant Axiom pour support.
+
+**Une intention que le prompt interdit d'écrire.** `o-en-dictated-sarah-coffee`
+(« she mentioned she is planning a trip to Italy ») attendait un fait sur Sarah,
+alors que la question 3 interdit les prédicats d'intention parce qu'ils
+deviennent faux le jour où ils se réalisent. Le corpus demandait ce que le prompt
+interdit. Arbitrage : « non pas de fiche pour sarah ». Les deux axes retirés.
+
+**Trois corrections de prompt.** La porte énonce désormais en tête que garder est
+le DÉFAUT et que jeter exige une ligne de la seconde liste, l'impression que la
+capture est courte ou banale n'en étant pas une. La ligne des liens qui ferme
+exige que la chose ayant sa propre identité soit NOMMÉE dans la phrase, ce qui
+empêche un article ou un tutoriel de s'y faire absorber. La question 3 du graphe
+énumère ce qui compte comme quelque chose de dit : un lien, une prise de
+position, une recommandation, une propriété.
+
+Résultat sur les 23 cas rejoués, tous en écart avant : 14 conformes, dont **sept
+par le prompt à étiquette inchangée** et sept par l'arbitrage.
+
+### Les neuf qui restent, et ce qu'ils disent
+
+Trois sont la même chose : une fiche à PROPOSER que le modèle omet ou crée
+franchement (Thai place, Brooklyn, Catskills). Le barreau UNSURE de la question 1
+existe et ne sert pas.
+
+Deux sont des portes qui ne s'ouvrent toujours pas, « J'ai relu mes notes de la
+semaine » et le mot de passe wifi. Celle-là mérite d'être notée : la capture est
+citée MOT POUR MOT dans la ligne du prompt qui dit de la garder, et elle reste
+jetée. Un exemple nommé ne suffit pas à renverser un jugement de trivialité.
+C'est une limite à connaître avant d'écrire une quatrième formulation.
+
+Les quatre autres sont la frontière épisode, une date, et Axiom qui vient du
+contexte et non de la capture.
