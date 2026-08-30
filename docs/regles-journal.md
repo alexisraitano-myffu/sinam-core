@@ -533,3 +533,34 @@ champs différents se relit comme si elle n'en visait qu'un. Le garde-fou n'est
 pas de relire la remarque, c'est de confronter la règle au corpus avant de
 l'écrire dans le prompt : les trois arbitrages étaient là depuis cinq jours et
 disaient non.
+
+### La passe sur les nœuds restants (30/08)
+
+Trois trouvailles après `N6-d`, en confrontant `N3`, `N4`, `N7`, `N9` et `N10` au
+corpus de la même façon.
+
+**Une date fausse.** `p-dur-birthday-durable`, « L'anniversaire de Yanis c'est le
+12 juin », portait `2026-06-12`. La phrase est au PRÉSENT, donc `N0-b` résout vers
+la prochaine occurrence à venir et jamais vers celle de juin dernier, et
+l'ancienne valeur en faisait de surcroît une occurrence passée que `N6-e` aurait
+fait descendre en épisode. Corrigée en `2027-06-12`. Les deux cas voisins,
+« le 27 juillet » et « le 2 août », étaient justes : c'est la seule date du corpus
+dont le mois était déjà passé, donc la seule où l'erreur pouvait se voir.
+
+**Vingt-six épisodes ne portaient pas leur date**, que `N7-d` garantit pourtant.
+Vingt venaient des réétiquetages du matin, six étaient antérieurs. Toutes
+résolues depuis le lundi 13 juillet du harnais. Une seule formulation reste
+volontairement ouverte, « cette nuit », qui chevauche deux jours : le cas a été
+daté sur le jour du récit, que la capture nomme par ailleurs.
+
+**`N3-b` n'a aucun cas.** Elle demande qu'un projet reconnu produise UNE note
+fondatrice de nature `note`. L'axe `proj` mesure autre chose : l'entrée de projet
+côté graphe. Les huit cas qui portent `proj` avec un `kind` autre que `note` ne
+la violent donc pas, ils ne la mesurent pas. Personne ne vérifie aujourd'hui
+qu'un « nouveau projet : rénovation de l'appartement » laisse bien une note. À
+ajouter à la liste des règles auxquelles il manque juste un cas, avec `N3-a`,
+`G6-c` et `G1-g`.
+
+**Ce qui est vert.** Aucun `kind` sans note (`N9-c`), aucune tâche datée
+transformée en événement sur les soixante concernées (`N4-d`), plus aucun
+événement à date passée (`N6-e`).
