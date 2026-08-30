@@ -660,3 +660,21 @@ pas le critère qui les produit. Ce qui a tranché, c'est une phrase d'Alexis qu
 renversait la question : ne pas demander de quelle formulation il s'agit, mais ce
 qu'on peut EXCLURE. Le corpus trouve qu'une règle est fausse ; il ne dit pas
 laquelle écrire à la place.
+
+### `N10-a` : la question posée en marge, et sa réponse mesurée
+
+La remarque était « pas sûr de ça… si jamais on est à 4 que se passe-t-il ? est-ce
+que cette règle est solide sur les précédents cas ? »
+
+Mesuré. Le corpus a exactement DEUX cas à trois souvenirs, aucun à quatre. Les
+deux sont des listes de corvées sans rapport entre elles (« pick up dry cleaning,
+check oil level in the car, pay water bill »), `N10-d` les rend correctement à
+trois, et **aucun des deux ne porte `needs_review`**. La règle mettait donc deux
+captures parfaitement justes en file de validation.
+
+La pénalité de confiance est retirée ; le test de fusion reste. Ce qui filtre est
+le test, jamais le compte, et un nombre n'est pas en lui-même un motif de doute.
+
+La question sur quatre reste sans réponse faute de cas, et c'est honnête de le
+dire : le corpus n'en a aucun. Si le comportement à quatre compte, il faut
+écrire le cas d'abord.
