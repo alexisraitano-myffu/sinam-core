@@ -237,17 +237,29 @@ survit, en `N9-i` : une tâche datée ne s'évapore jamais avant son échéance.
 
 ## N9 — les drapeaux, après que la nature est décidée
 
+> **L'éphémère est retiré.** Il marquait la tâche assez triviale pour s'effacer
+> toute seule au bout de 48 h. C'était le même jugement de trivialité que le nœud
+> de la micro-course, sous un autre nom, et il est parti pour la même raison :
+> on ne pèse plus ce qui mérite de rester. C'est la décroissance qui oublie les
+> tâches, comme tout le reste, et elle ne demande aucun jugement.
+>
+> Quatre identifiants restent vacants : `N9-a` (sa définition), `N9-e`
+> (l'hésitation entre durable et éphémère), `N9-i` (une tâche datée n'expire pas
+> avant sa date) et `N9-j` (le contenu du rappel). `N9-b` survit le temps que la
+> production cesse d'émettre le champ, et disparaîtra avec lui.
+>
+> **La décision est réversible et le dossier est gardé.** Ce que le drapeau
+> faisait, ce que le corpus en disait et ce qu'il faudrait pour le rétablir sont
+> écrits dans `regles-journal.md`.
+
+
 | # | QUAND | SI | ALORS | Étiquettes |
 |---|---|---|---|---|
-| N9-a | Une fois la nature du souvenir arrêtée, jamais avant. | Les QUATRE conditions tiennent ensemble : un verbe d'action à l'infinitif ou à l'impératif visant l'auteur ; l'action est encore en attente ; sans destinataire, sans engagement, sans date ; sans contenu durable. | Poser `ephemeral` à vrai. Une seule condition qui manque le met à faux, mécaniquement. Par défaut il est faux : une URL, un énoncé, une phrase rapportée, un anniversaire, une action passée n'en portent aucun. | garantie · code |
-| N9-b | Une fois `ephemeral` posé à vrai. | Un souvenir est aussi produit. | La coexistence n'est permise que pour une TÂCHE ou un ÉVÉNEMENT. Ni une note ni un épisode ne sont jamais éphémères : dans ces deux cas, remettre le drapeau à faux. | garantie · code |
+| N9-b | Au moment d'émettre la réponse, tant que le champ de l'éphémère existe encore dans le schéma de sortie. | Toujours. | Ne JAMAIS le poser à vrai. Le drapeau est retiré (voir l'encadré ci-dessous) et cette règle disparaîtra avec le champ. Elle existe parce que la production le lit encore : un drapeau à vrai fait jeter par le routage tout souvenir qui n'est ni tâche ni événement, et la capture est alors perdue sans trace. Le poser à faux ne coûte rien. | garantie · code |
 | N9-c | Au moment d'émettre un souvenir. | Sa note serait vide. | Ne pas l'émettre. Rendre une liste vide à la place. Une nature sans note perd la capture en ayant l'air d'une décision, le seul résultat que rien en aval ne peut rattraper. | garantie · code |
-| N9-d | Au moment de noter la confiance. | Toujours. | La faire porter sur le ROUTAGE seul, c'est-à-dire quels souvenirs, de quelle nature, et l'éphémère. Sur rien d'autre. Un routage évident reste à 1.0 même sur une capture très brève, et quoi qu'on ignore par ailleurs de son contenu. Descendre sous le seuil seulement quand la capture est illisible ou tronquée : « relancer » se route tout seul, « rdv jd 14h » doit douter. | garantie · prompt |
-| N9-e | Au moment de noter la confiance. | On hésite entre « action durable » et « éphémère ». | Émettre la tâche et baisser la confiance. Ne jamais résoudre cette hésitation en ne gardant rien. | garantie · prompt |
+| N9-d | Au moment de noter la confiance. | Toujours. | La faire porter sur le ROUTAGE seul, c'est-à-dire quels souvenirs et de quelle nature. Sur rien d'autre. Un routage évident reste à 1.0 même sur une capture très brève, et quoi qu'on ignore par ailleurs de son contenu. Descendre sous le seuil seulement quand la capture est illisible ou tronquée : « relancer » se route tout seul, « rdv jd 14h » doit douter. | garantie · prompt |
 | N9-f | Après le routage, sur un routage déjà arrêté. | La capture annule une action ou une occasion déjà prévue (« finalement je ne vais pas appeler le dentiste »). | Renseigner le champ d'annulation avec l'action annulée, dans les mots de la capture et à la forme affirmative : « appeler le dentiste », jamais « ne pas appeler le dentiste ». Ce champ ne modifie le routage dans aucun sens : il ne crée pas de souvenir et n'en retire pas. **Quatre choses ne le remplissent JAMAIS** : une autocorrection reprise dans le même souffle, une chose déjà faite, une correction de fait, et un report de date, où la tâche vit et seule sa date bouge. | garantie · prompt |
-| N9-i | Une fois `ephemeral` posé à vrai sur une tâche. | Cette tâche porte une date. | Le drapeau ne peut pas la faire expirer avant son échéance : la tâche reste visible jusqu'à sa date, quoi qu'il arrive aux 48 h. Une tâche datée ne disparaît jamais avant sa date. | garantie · code |
 | N9-h | Au moment de remplir les champs de texte. | Un souvenir est produit. | Sa `note` porte ce que le souvenir GARDE, et rien d'autre. Elle n'est jamais vide, voir `N9-c`. Une capture qu'on ne garde pas rend une liste VIDE : ne jamais déplacer son contenu dans un autre champ pour éviter d'en rendre une. | garantie · code |
-| N9-j | Au moment de remplir les champs de texte. | `ephemeral` est vrai. | Remplir le contenu éphémère avec le rappel qui expire en 48 h, dans les mots de l'auteur et dans la langue de la capture. Il ne remplace JAMAIS une note : quand les deux existent, remplir les deux. | garantie · code |
 | N9-k | Au moment de remplir les champs de texte. | Un souvenir est produit. | Son `summary` décrit SA PROPRE note, en une phrase, dans la langue de la capture. Il n'existe qu'à côté d'une note et ne la remplace jamais. | garantie · code |
 
 ## N10 — combien de souvenirs ?

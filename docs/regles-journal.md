@@ -379,8 +379,9 @@ les 25 qui le portaient, l'arbitrage précédent ne couvrant plus la nouvelle
 Trois choses n'ont volontairement PAS été assertées sur ces cas. `event_date` sur
 les épisodes passés, que `N7-d` garantit pourtant : les vingt dates se calculent à
 la main et une passe séparée coûtera moins cher qu'une erreur silencieuse.
-`ephemeral` sur les six nouvelles tâches, tant que `N9-a` n'est pas repris.
-`proj` sur les comptes rendus d'avancement, qui relève de la moitié graphe.
+`proj` sur les comptes rendus d'avancement, qui relève de la moitié graphe. Et
+`ephemeral`, dont la valeur héritée a été corrigée dans la passe suivante, plus
+bas : les six nouvelles tâches portaient encore l'ancien `true`.
 
 **Sept cas restent ouverts** et n'ont pas été touchés, parce qu'aucun d'eux ne se
 tranche mécaniquement : `g-progress-decision-fr` (une décision enfouie dans un
@@ -411,3 +412,81 @@ sous le nom « action perdue ».
 Ce n'est pas une question de règle, c'est un défaut de code, et il devient plus
 probable depuis que `N7-c` envoie en épisode tout ce que le modèle a l'habitude
 de marquer éphémère.
+
+---
+
+## Le dossier de l'éphémère, retiré le 30/08
+
+Gardé en entier pour qu'il puisse revenir. Retiré de la production, pas jeté.
+
+### Ce que c'était
+
+Un drapeau booléen posé par le modèle sur une capture, `is_ephemeral`. Il
+marquait une intention assez triviale pour s'effacer toute seule. Sa définition,
+l'ancien `N9-a`, tenait en quatre conditions à réunir ensemble : un verbe
+d'action à l'infinitif ou à l'impératif visant l'auteur, une action encore en
+attente, sans destinataire ni engagement ni date, et sans contenu durable. Une
+seule condition manquante le mettait à faux. Trois autres règles en dépendaient :
+la coexistence limitée aux tâches et aux événements (`N9-b`), la garde qui
+empêchait une tâche datée d'expirer avant son échéance (`N9-i`), et le contenu du
+rappel écrit dans les mots de l'auteur (`N9-j`). Une quatrième, `N9-e`, disait
+d'émettre la tâche et de baisser la confiance quand on hésitait.
+
+### Ce qu'il faisait en production
+
+Trois effets, dont deux qui ne se lisaient nulle part dans les règles.
+
+- Une intention était écrite dans une table dédiée, avec un TTL de 48 heures.
+- Tout souvenir qui n'était ni `task` ni `event` était SAUTÉ, donc une note ou un
+  épisode marqué éphémère n'était jamais écrit.
+- Si la capture n'avait par ailleurs ni entité, ni projet, ni souvenir durable,
+  une sortie rapide s'exécutait et il ne restait que l'intention. Le garde-fou
+  qui recopie le contenu brut d'une capture qui n'a rien laissé comptait le
+  drapeau comme une trace, donc il ne rattrapait rien.
+
+Autrement dit le drapeau ne s'ajoutait pas à un souvenir, il pouvait le
+remplacer. `N9-b` demandait exactement l'inverse. Le harnais de langue surveille
+déjà cette bascule sous le nom « action perdue ».
+
+### Pourquoi il est parti
+
+Trois raisons, dans l'ordre de force.
+
+**C'est le jugement de trivialité, sous un autre nom.** Le nœud de la
+micro-course a été retiré le 29/08 parce qu'on ne pèse plus ce qui mérite de
+rester. L'éphémère posait la même question au même endroit, et c'est pour ça que
+sa définition n'a pas survécu à ce retrait.
+
+**Le corpus le démentait déjà, plus qu'aucune autre règle.** 57 tâches sans date
+ni destinataire : 52 à faux, 5 à vrai. 16 tâches datées à vrai, 15 à faux. Aucun
+ancrage ne prédisait le drapeau. En pratique il suivait la trivialité, de façon
+irrégulière : « Acheter du pain » éphémère et « Acheter un harnais » permanent,
+« pick up dry cleaning » éphémère et « buy coffee beans paper towels bananas »
+permanent. Les quatre conditions de `N9-a` auraient rendu les 57 éphémères, donc
+elles contredisaient 52 étiquettes.
+
+**Un mécanisme d'oubli suffit.** La décroissance oublie déjà les tâches. En
+garder deux dont un seul demande un jugement, c'est garder le jugement pour rien.
+
+### Ce que ça coûte
+
+Plus de rappel court. La liste de tâches s'allonge encore, après l'allongement
+déjà accepté pour `N4-e`. C'est le prix assumé.
+
+### Ce qu'il faudrait pour le rétablir
+
+Deux conditions, et la seconde est la vraie.
+
+**Un besoin mesuré**, pas supposé : des retours de testeurs sur une liste de
+tâches devenue illisible, ou un chiffre sur la part de tâches jamais rouvertes.
+
+**Un critère qui ne soit pas un jugement.** Si l'éphémère revient, il ne peut pas
+redevenir « est-ce assez trivial ». La forme qui tenait le mieux à l'examen était
+l'ancrage : une tâche que rien ne retient au-delà de son exécution, ni date, ni
+autre personne, ni contenu qui survive à l'action, s'efface ; un seul ancrage
+suffit à la garder. Mécanique, calculable, aucune trivialité pesée. C'est là
+qu'il faudrait reprendre, et il faudrait alors basculer 52 étiquettes du corpus.
+
+Et dans tous les cas, corriger d'abord le routage : normaliser le drapeau à faux
+à l'entrée quand le souvenir n'est ni tâche ni événement, plutôt que de filtrer
+souvenir par souvenir, et cesser de le compter comme une trace.
