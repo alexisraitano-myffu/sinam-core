@@ -18,6 +18,24 @@ use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
 
+/// Le contenu d'un fichier AVANT son bloc de tests.
+///
+/// Les tests ne changent aucun comportement : les hacher ferait rougir le
+/// garde-fou côté Python sur une modification qui ne peut rien casser, et un
+/// rouge qu'on apprend à ignorer ne garde plus rien. Mesuré le 2026-09-01 :
+/// retirer sept fixtures périmées suffisait à déclarer la roue en retard.
+///
+/// La troncature au premier `#[cfg(test)]` en début de ligne tient parce que
+/// chaque fichier du cœur n'en a qu'un, et en fin de fichier. Un test Python
+/// garde cette convention, sans quoi la troncature emporterait du vrai code.
+fn sans_les_tests(source: &str) -> &str {
+    match source.find("\n#[cfg(test)]") {
+        Some(i) => &source[..i + 1],
+        None if source.starts_with("#[cfg(test)]") => "",
+        None => source,
+    }
+}
+
 /// Tous les `.rs` d'un dossier, triés par chemin relatif. Le tri est ce qui
 /// rend l'empreinte reproductible : l'ordre de `read_dir` ne l'est pas.
 fn fichiers_rs(racine: &Path, prefixe: &str, out: &mut Vec<(String, PathBuf)>) {
@@ -51,9 +69,10 @@ fn main() {
 
     let mut h = Sha256::new();
     for (rel, chemin) in &fichiers {
+        let source = fs::read_to_string(chemin).unwrap_or_default();
         h.update(rel.as_bytes());
         h.update([0u8]);
-        h.update(fs::read(chemin).unwrap_or_default());
+        h.update(sans_les_tests(&source).as_bytes());
         h.update([0u8]);
     }
     let empreinte: String = format!("{:x}", h.finalize()).chars().take(12).collect();
