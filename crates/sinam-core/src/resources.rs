@@ -386,6 +386,7 @@ impl Brain {
                      embedding = ?5, fetched_at = ?6 WHERE id = ?1",
                     params![id, page.title, page.text, summary, embedding, now],
                 )?;
+                nommer_la_fiche_du_lien(&conn, &id, url, &page.title, capture_id)?;
                 Ok(Some(id))
             }
             // Un lien que le classifieur n'a pas vu passer. Rare, et on ne le
@@ -418,6 +419,85 @@ impl Brain {
         }
         Ok(ids)
     }
+}
+
+/// Donner à la fiche d'un lien le titre de sa page, une fois la page lue.
+///
+/// Le prompt du graphe exige qu'une ressource appartienne à une entité. Pour un
+/// lien nu il n'y a rien à nommer, alors il assume le bouche-trou en toutes
+/// lettres : une entité nommée par l'URL, « that is honest, and a later pass may
+/// rename it ». Cette passe-là n'existait pas. Le titre réel était déjà en base,
+/// dans `resources.title`, à côté d'une fiche qui s'appelait encore `https://…`.
+///
+/// **Appliquer ou proposer, et la frontière est le nom actuel.** La discipline
+/// du routage est qu'un renommage PROPOSE, il n'applique pas : on ne renomme
+/// jamais une fiche dans le dos de son propriétaire. Cette règle vaut quand il a
+/// choisi le nom. Personne n'a choisi une URL — c'est un bouche-trou que le
+/// prompt assume comme tel — donc la remplacer par le titre de la page ne trahit
+/// aucune décision, et poser la question remplirait la file de questions sans
+/// enjeu. Dès que la fiche porte un vrai nom, on repasse à la proposition.
+///
+/// Deux gardes, et le premier est le piège de cette fonction : quand la page n'a
+/// pas de titre, `fetch_and_extract` renvoie l'URL EN GUISE de titre, à deux
+/// endroits. Un renommage naïf remplacerait donc l'URL par l'URL en croyant
+/// avoir réussi. Le garde est `titre != url`, jamais `titre.is_empty()`.
+///
+/// Le TYPE n'est pas touché, comme partout ailleurs dans cette passe : la page
+/// nomme, elle ne retype pas.
+fn nommer_la_fiche_du_lien(
+    conn: &rusqlite::Connection,
+    resource_id: &str,
+    url: &str,
+    titre: &str,
+    capture_id: Option<&str>,
+) -> Result<(), CoreError> {
+    let titre = titre.trim();
+    if titre.is_empty() || titre == url {
+        return Ok(());
+    }
+    let lien: Option<(Option<String>,)> = conn
+        .query_row(
+            "SELECT entity_id FROM resources WHERE id = ?1",
+            params![resource_id],
+            |r| Ok((r.get(0)?,)),
+        )
+        .optional()?;
+    // Une ressource sans fiche n'a rien à renommer. C'est le cas du lien que le
+    // classifieur n'a pas vu passer, celui de la branche voisine.
+    let Some((Some(entity_id),)) = lien else {
+        return Ok(());
+    };
+    let fiche: Option<(String, String)> = conn
+        .query_row(
+            "SELECT canonical_name, aliases FROM entities WHERE id = ?1",
+            params![entity_id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()?;
+    let Some((nom_actuel, aliases_bruts)) = fiche else {
+        return Ok(());
+    };
+    if nom_actuel.trim().eq_ignore_ascii_case(titre) {
+        return Ok(());
+    }
+    if nom_actuel.trim() != url {
+        return crate::routing::record_rename_proposal(
+            conn, &entity_id, &nom_actuel, titre, capture_id,
+        );
+    }
+    // L'URL cède la place. L'ancien nom part en alias, exactement comme le fait
+    // le renommage manuel : c'est ce qui garde la fiche trouvable par ce que
+    // l'utilisateur a pu déjà taper.
+    let mut aliases: Vec<String> = serde_json::from_str(&aliases_bruts).unwrap_or_default();
+    if !aliases.iter().any(|a| a == &nom_actuel) {
+        aliases.push(nom_actuel);
+    }
+    aliases.retain(|a| !a.eq_ignore_ascii_case(titre));
+    conn.execute(
+        "UPDATE entities SET canonical_name = ?1, aliases = ?2 WHERE id = ?3",
+        params![titre, json!(aliases).to_string(), entity_id],
+    )?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -517,5 +597,115 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM resources", [], |r| r.get(0))
             .unwrap();
         assert_eq!(n, 0);
+    }
+    /// Prépare une fiche déjà liée à une ressource, comme le routage l'écrit.
+    fn fiche_liee(brain: &Brain, url: &str, nom: &str) -> String {
+        let conn = brain.storage.lock().unwrap();
+        let eid = new_uuid();
+        conn.execute(
+            "INSERT INTO entities (id, type, canonical_name) VALUES (?1,'resource',?2)",
+            params![eid, nom],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO resources (id, type, source, url, entity_id) \
+             VALUES (?1,'page','c1',?2,?3)",
+            params![new_uuid(), url, eid],
+        )
+        .unwrap();
+        eid
+    }
+
+    fn nom_et_alias(brain: &Brain, eid: &str) -> (String, String) {
+        let conn = brain.storage.lock().unwrap();
+        conn.query_row(
+            "SELECT canonical_name, aliases FROM entities WHERE id = ?1",
+            params![eid],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap()
+    }
+
+    fn propositions(brain: &Brain) -> i64 {
+        let conn = brain.storage.lock().unwrap();
+        conn.query_row(
+            "SELECT COUNT(*) FROM entity_rename_proposals WHERE status = 'pending'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn une_fiche_nommee_par_son_url_prend_le_titre_de_la_page() {
+        let port = spawn_stub(
+            "200 OK",
+            "text/html; charset=utf-8",
+            "<html><head><title>Le compost en ville</title></head>\
+             <body><p>Un texte.</p></body></html>",
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let brain = Brain::open(dir.path().join("r.db").to_str().unwrap(), None).unwrap();
+        let url = format!("http://127.0.0.1:{port}/compost");
+        let eid = fiche_liee(&brain, &url, &url);
+
+        brain.process_resource(&url, Some("c1"), None).unwrap();
+
+        let (nom, aliases) = nom_et_alias(&brain, &eid);
+        assert_eq!(nom, "Le compost en ville");
+        // L'URL reste trouvable : c'est peut-être ce que l'utilisateur a tapé.
+        assert!(aliases.contains(&url), "l'ancien nom doit partir en alias : {aliases}");
+        assert_eq!(propositions(&brain), 0, "personne n'a choisi l'URL, on n'a rien à demander");
+    }
+
+    #[test]
+    fn une_fiche_deja_nommee_recoit_une_proposition_et_garde_son_nom() {
+        let port = spawn_stub(
+            "200 OK",
+            "text/html; charset=utf-8",
+            "<html><head><title>Figma — UI components</title></head>\
+             <body><p>Un texte.</p></body></html>",
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let brain = Brain::open(dir.path().join("r.db").to_str().unwrap(), None).unwrap();
+        let url = format!("http://127.0.0.1:{port}/figma");
+        let eid = fiche_liee(&brain, &url, "Figma");
+
+        brain.process_resource(&url, Some("c1"), None).unwrap();
+
+        let (nom, _) = nom_et_alias(&brain, &eid);
+        assert_eq!(nom, "Figma", "un nom choisi ne se remplace jamais dans le dos");
+        assert_eq!(propositions(&brain), 1);
+    }
+
+    /// Le piège de cette fonction, pris là où il mord vraiment.
+    ///
+    /// Sans titre, `fetch_and_extract` renvoie l'URL EN GUISE de titre. Écrit
+    /// `titre.is_empty()`, le garde laisse alors passer une proposition de
+    /// renommer une fiche qui a un vrai nom... en URL. Le renommage direct,
+    /// lui, est déjà couvert par le garde du nom identique — c'est pour ça que
+    /// ce test attaque par la fiche NOMMÉE, sinon il ne garde rien : vérifié en
+    /// affaiblissant le garde, il reste vert sur une fiche nommée par son URL.
+    #[test]
+    fn une_page_sans_titre_ne_propose_pas_de_renommer_en_url() {
+        let port = spawn_stub(
+            "200 OK",
+            "text/html; charset=utf-8",
+            "<html><body><p>Aucun titre ici.</p></body></html>",
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let brain = Brain::open(dir.path().join("r.db").to_str().unwrap(), None).unwrap();
+        let url = format!("http://127.0.0.1:{port}/nu");
+        let eid = fiche_liee(&brain, &url, "Le blog de Camille");
+
+        brain.process_resource(&url, Some("c1"), None).unwrap();
+
+        let (nom, _) = nom_et_alias(&brain, &eid);
+        assert_eq!(nom, "Le blog de Camille");
+        assert_eq!(
+            propositions(&brain),
+            0,
+            "une page sans titre n'a rien à proposer, surtout pas son URL"
+        );
     }
 }

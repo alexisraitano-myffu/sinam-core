@@ -1332,7 +1332,7 @@ impl Brain {
                         .filter(|n| !n.is_empty() && !n.eq_ignore_ascii_case(&canonical))
                     {
                         record_rename_proposal(
-                            conn, &id, &canonical, nouveau, source_inbox_id,
+                            conn, &id, &canonical, nouveau, Some(source_inbox_id),
                         )?;
                     }
                 }
@@ -2653,12 +2653,12 @@ fn record_creation_proposal(
     Ok(())
 }
 
-fn record_rename_proposal(
+pub(crate) fn record_rename_proposal(
     conn: &Connection,
     entity_id: &str,
     current_name: &str,
     proposed_name: &str,
-    capture_id: &str,
+    capture_id: Option<&str>,
 ) -> Result<(), CoreError> {
     let already: i64 = conn.query_row(
         "SELECT COUNT(*) FROM entity_rename_proposals \
