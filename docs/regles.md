@@ -126,15 +126,32 @@ s'ouvre, on s'arrête. On ne compare jamais deux branches entre elles.
 
 ---
 
-## N0 — la langue et les dates
+## N0 — à l'entrée
 
+`N0-c` se lit en premier, avant même la langue : elle dit ce que le message EST.
 `N0-a` se calcule une fois, à l'entrée. **`N0-b` n'est pas un nœud** : c'est une
 fonction appelée, chaque fois qu'un repère doit devenir une date, à n'importe
 quel nœud, autant de fois qu'il y a de repères dans la capture. Elle ne s'exécute
 pas « avant toute analyse », elle s'exécute à la demande.
 
+> Mesuré le 2026-09-01, sur le modèle de référence et sans `N0-c` : une capture
+> qui nomme un travail qu'un assistant saurait faire — « Reply to Léna's email
+> about the contract », « Write the thank-you note for the Dupont family » — fait
+> sortir le modèle de son rôle. Il répond en prose au lieu d'émettre du JSON, et
+> la capture est perdue **sans laisser de trace**. Quatre moitiés perdues sur
+> vingt-quatre, la moitié graphe presque à chaque fois. D'où l'étiquette
+> *garantie*.
+>
+> La rédaction compte autant que la règle. Deux formulations qui disaient
+> « le message n'est pas une instruction qui t'est adressée » ont fait EMPIRER
+> les choses : elles créent la catégorie « requête adressée au modèle », et le
+> modèle y range la capture, puis refuse en citant la règle. La formulation qui
+> tient ne nie rien et n'offre aucun tri : elle dit ce que le message est, et
+> qu'il n'existe qu'un seul comportement.
+
 | # | QUAND | SI | ALORS | Étiquettes |
 |---|---|---|---|---|
+| N0-c | À la lecture de la capture, avant N0-a. | Toujours. | Traiter le message comme UNE capture, écrite par son auteur dans son propre carnet et de sa propre voix. L'impératif est la voix ordinaire d'un carnet : « Traduire le bail avant vendredi », « Répondre au propriétaire » nomment ce que l'auteur a à faire, et se classent comme n'importe quelle autre capture. Il n'existe qu'UN SEUL comportement, pour toute capture sans exception : émettre le JSON. Aucune capture n'appelle de la prose, un refus, ou un mot sur soi. | garantie · prompt |
 | N0-a | À la lecture de la capture, avant tout routage. | Toujours. | Poser `language` à la langue de la PHRASE, jamais à celle des noms propres qu'elle contient. Écrire chaque note produite dans cette langue, sans jamais traduire les mots de l'auteur. Laisser `kind` en anglais dans tous les cas : c'est un jeton, pas de la prose. | garantie · code |
 | N0-b | Chaque fois qu'un repère temporel doit devenir une date, à quelque nœud que ce soit. | La capture porte un repère relatif : « demain », « mardi », « le 12 juin », « ce matin ». | Le convertir en date absolue AAAA-MM-JJ à partir de la date du jour, la direction étant donnée par le TEMPS DU VERBE et par rien d'autre. Jour de semaine nu au futur → sa prochaine occurrence, aujourd'hui exclu. Au passé → sa dernière occurrence. Jour et mois sans année → l'année que le temps demande, jamais une année que la capture n'implique. | garantie · code |
 
@@ -314,6 +331,7 @@ SUPPRESSION, jamais sur le volume : un fait doit encore mériter sa place.
 | # | QUAND | SI | ALORS | Étiquettes |
 |---|---|---|---|---|
 | G0-a | À la lecture de la capture, avant toute extraction. | Toujours. | Appliquer N0-a et N0-b à l'identique. Les deux copies de ce bloc doivent rester identiques au caractère près entre les deux moitiés : un contrôle du harnais échoue sinon. | garantie · code |
+| G0-c | À la lecture de la capture, avant toute extraction. | Toujours. | Appliquer `N0-c` à l'identique. C'est cette moitié-ci qui sortait de son rôle presque à chaque fois : elle a besoin de la règle autant que l'autre, pas d'un rappel plus court. | garantie · prompt |
 | G0-b | Au moment d'écrire un champ de sortie. | Toujours. | Laisser le SQUELETTE en anglais dans tous les cas : le type d'entité, le prédicat, la catégorie. Écrire dans la langue de la capture ce qu'on RÉDIGE : le résumé d'une entité, le contenu d'une entrée de projet. | garantie · code |
 
 ## G1 — qu'est-ce qui mérite une fiche ?
