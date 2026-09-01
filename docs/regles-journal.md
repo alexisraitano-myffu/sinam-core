@@ -1085,3 +1085,36 @@ précaution que pour `N0-c` le même jour.
 Contrôlé sur les douze cas de la famille date : le cas visé passe au vert, le
 témoin voisin reste vert, aucun autre ne bouge. Les trois rouges restants
 (récurrence, `kind`, confiance) sont antérieurs et sans rapport.
+
+---
+
+## 2026-09-01 — La colonne `destination` disait `code` pour onze règles qui lisent
+
+La colonne dit OÙ une règle doit vivre, et `code` y signifie une chose précise :
+la règle se CALCULE, il n'y a qu'une bonne réponse, et le code est le seul
+endroit où deux moteurs ne peuvent pas diverger.
+
+Trente et une règles portaient `code`. En leur appliquant ce critère, onze ne le
+méritent pas : elles exigent de LIRE la capture avant de pouvoir décider.
+
+| règle | ce qu'elle demande de lire |
+|---|---|
+| `N1-a` | si une date déjà vue en est encore une |
+| `N4-c` | à qui appartient l'action |
+| `N4-d` | si l'échéance fait une tâche ou un événement |
+| `N4-e` | rien, mais elle INTERDIT un jugement, ce qui n'est pas un calcul |
+| `N6-e` | si l'occurrence est encore à venir |
+| `N7-d` | si la date revient chaque année |
+| `G3-g` | à qui renvoie le pronom |
+| `G4-d` | quel marqueur d'incertitude porte la phrase |
+| `G5-a` | quatre questions dont chacune est un jugement, seul l'ORDRE est mécanique |
+| `G5-b` | quel marqueur, dans quelque langue que ce soit |
+| `G6-d` | lesquels des mots de l'auteur reporter |
+
+Les vingt qui restent en `code` ont toutes la même forme : une énumération
+fermée, une contrainte de structure, une déduplication, un ordre. Rien qui
+demande de comprendre la phrase.
+
+Ça ne change pas une ligne du prompt. Ça change ce que le document promet, et
+donc les onze chantiers qu'on n'ira pas ouvrir en croyant qu'un calcul nous
+attendait.
