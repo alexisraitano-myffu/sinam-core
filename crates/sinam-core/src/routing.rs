@@ -3915,7 +3915,6 @@ mod tests {
             "language": "fr",
             "atomic_note": note,
             "atomic_note_kind": if note.is_null() { "note" } else { "note" },
-            "is_ephemeral": false,
             "entities": entites,
             "relations": [],
             "project_entries": [],
@@ -4017,7 +4016,6 @@ mod tests {
             "language": "fr",
             "atomic_note": "Ryusuke Hamaguchi",
             "atomic_note_kind": "task",
-            "is_ephemeral": false,
             "entities": [
                 {"canonical_name": "Ryusuke Hamaguchi", "type": "person", "aliases": [],
                  "summary": null, "attributes": {}, "facts": []},
@@ -4322,7 +4320,6 @@ mod tests {
             "atomic_note": null,
             "atomic_note_kind": null,
             "event_date": null,
-            "is_ephemeral": false,
             "entities": [],
             "relations": [],
             "project_entries": [],
@@ -4442,7 +4439,6 @@ mod tests {
             "atomic_note": "J'ai la fête de Pierre le 20",
             "atomic_note_kind": "event",
             "event_date": "2026-07-20",
-            "is_ephemeral": false,
             "entities": [{
                 "canonical_name": "Pierre",
                 "type": "person",
@@ -4494,7 +4490,6 @@ mod tests {
             "language": "fr",
             "atomic_note": "J'étais seul à la Bibliothèque Forney hier",
             "atomic_note_kind": "episode",
-            "is_ephemeral": false,
             "entities": [{
                 "canonical_name": "Bibliothèque Forney", "type": "place",
                 "aliases": [], "facts": facts
@@ -4713,7 +4708,6 @@ mod tests {
             "language": "fr",
             "atomic_note": "Je me demande si je devrais arrêter le café",
             "atomic_note_kind": "note",
-            "is_ephemeral": false,
             "summary": "réflexion sur le café",
             "entities": [],
             "relations": [],
@@ -5012,7 +5006,6 @@ mod tests {
             "language": "fr",
             "atomic_note": "…",
             "atomic_note_kind": kind,
-            "is_ephemeral": false,
             "summary": "",
             "entities": [],
             "relations": [],

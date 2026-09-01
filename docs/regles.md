@@ -249,10 +249,15 @@ survit, en `N9-i` : une tâche datée ne s'évapore jamais avant son échéance.
 >
 > Quatre identifiants restent vacants : `N9-a` (sa définition), `N9-e`
 > (l'hésitation entre durable et éphémère), `N9-i` (une tâche datée n'expire pas
-> avant sa date) et `N9-j` (le contenu du rappel). `N9-b` survit le temps que le
-> champ reste dans le schéma de sortie, et disparaîtra avec lui. **Depuis le
-> 2026-09-01, le routage ne le lit plus** : le poser à vrai ne fait plus rien
-> perdre, la règle ne protège donc plus rien et ne fait qu'imposer une valeur.
+> avant sa date), `N9-j` (le contenu du rappel) et `N9-b`, qui interdisait de
+> poser le drapeau. Elle a disparu le 2026-09-01 avec le champ lui-même : le
+> routage avait cessé de le lire, puis le prompt d'en parler, puis le schéma de
+> sortie de le déclarer. Il ne reste plus rien à interdire.
+>
+> **La table `intentions` reste en place, vide et dormante.** Elle passe par la
+> synchro, donc la supprimer serait une migration de schéma sur des répliques
+> qui vivent sur d'autres appareils, pour aucun gain. Une vieille réplique peut
+> encore poser le drapeau : un test du cœur vérifie qu'il ne coûte plus rien.
 >
 > **La décision est réversible et le dossier est gardé.** Ce que le drapeau
 > faisait, ce que le corpus en disait et ce qu'il faudrait pour le rétablir sont
@@ -261,7 +266,6 @@ survit, en `N9-i` : une tâche datée ne s'évapore jamais avant son échéance.
 
 | # | QUAND | SI | ALORS | Étiquettes |
 |---|---|---|---|---|
-| N9-b | Au moment d'émettre la réponse, tant que le champ de l'éphémère existe encore dans le schéma de sortie. | Toujours. | Ne JAMAIS le poser à vrai. Le drapeau est retiré (voir l'encadré ci-dessous) et cette règle disparaîtra avec le champ. **Sa raison d'être a changé le 2026-09-01** : jusque-là, un drapeau à vrai faisait jeter par le routage tout souvenir qui n'était ni tâche ni événement, et la capture était perdue sans trace. Le routage ne le lit plus, donc la règle ne protège plus rien ; elle ne fait qu'imposer une valeur au champ que le schéma exige encore. Le poser à faux ne coûte rien. | préférence · code |
 | N9-c | Au moment d'émettre un souvenir. | Sa note serait vide. | Ne pas l'émettre. Rendre une liste vide à la place. Une nature sans note perd la capture en ayant l'air d'une décision, le seul résultat que rien en aval ne peut rattraper. | garantie · code |
 | N9-d | Au moment de noter la confiance. | Toujours. | La faire porter sur le ROUTAGE seul, c'est-à-dire quels souvenirs et de quelle nature. Sur rien d'autre. Un routage évident reste à 1.0 même sur une capture très brève, et quoi qu'on ignore par ailleurs de son contenu. Descendre sous le seuil seulement quand la capture est illisible ou tronquée : « relancer » se route tout seul, « rdv jd 14h » doit douter. | garantie · prompt |
 | N9-f | Après le routage, sur un routage déjà arrêté. | La capture annule une action ou une occasion déjà prévue (« finalement je ne vais pas appeler le dentiste »). | Renseigner le champ d'annulation avec l'action annulée, dans les mots de la capture et à la forme affirmative : « appeler le dentiste », jamais « ne pas appeler le dentiste ». Ce champ ne modifie le routage dans aucun sens : il ne crée pas de souvenir et n'en retire pas. **Quatre choses ne le remplissent JAMAIS** : une autocorrection reprise dans le même souffle, une chose déjà faite, une correction de fait, et un report de date, où la tâche vit et seule sa date bouge. | garantie · prompt |

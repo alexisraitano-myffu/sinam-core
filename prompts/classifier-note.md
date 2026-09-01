@@ -20,16 +20,9 @@ Return ONLY valid JSON (no markdown):
       "summary": "string — one sentence describing this note, in its language"
     }
   ],
-  "is_ephemeral": false,
-  "ephemeral_content": null,
   "cancels_action": "string or null — the action a capture CALLS OFF. Rule at the end of this file",
   "classification_confidence": 1.0
 }
-
-`is_ephemeral` IS RETIRED. Leave it false and `ephemeral_content` null, ALWAYS, whatever the
-capture says. The fields still exist in the schema and the engine still reads them: set the flag
-true and the engine DISCARDS every memory that is not a task or an event, losing the capture
-without a trace. Setting it false costs nothing.
 
 WORK IN TWO STAGES. The GATE decides whether anything is kept at all. The ROUTING TABLE then
 decides what it is. The order between them is the rule, and neither is reopened by what follows.
@@ -239,10 +232,6 @@ forgetting, not by this node.
 
 ═══ THE FLAGS, once the kind is decided ═══
 
- · `is_ephemeral` IS RETIRED. NEVER set it true, and leave `ephemeral_content` null, whatever the
-   capture says. The engine still reads the field: set true, it DISCARDS every memory that is
-   neither a task nor an event, and the capture is lost without a trace. Setting it false costs
-   nothing.
  · A memory whose note would be EMPTY is not emitted; return an empty list instead. A kind with no
    note loses the capture while looking like a decision, the one outcome nothing downstream can
    repair.

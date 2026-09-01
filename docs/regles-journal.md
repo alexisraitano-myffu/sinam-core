@@ -953,3 +953,45 @@ remplacer mérite d'exister ».
 La coordonnée ne dispense pas de preuve, elle ramène au plancher : une
 persistance de 1 ne passe toujours pas, et un test témoin le vérifie. Sans lui,
 remplacer le palier par un court-circuit complet resterait vert.
+
+## 2026-09-01 — L'éphémère quitte tout, dans l'ordre
+
+Le drapeau est parti en trois temps, et l'ordre était la seule chose qui comptait
+puisque chaque étage servait de garde-fou au suivant.
+
+**Le routage a cessé de le lire.** La sortie rapide, le filtre par souvenir, la
+ligne qui le comptait comme une trace et l'écriture d'intention. C'était le
+chemin de perte, et il n'avait pas besoin que le drapeau soit juste pour faire
+des dégâts : une bascule à tort effaçait la capture sans trace ni question.
+
+**Le prompt a cessé de l'émettre.** Deux passages le décrivaient encore, dont un
+qui disait « the engine still reads the field » — faux depuis quelques heures.
+Un prompt qui décrit un mécanisme disparu ne se contente pas d'être périmé : il
+apprend au modèle à se méfier de quelque chose qui n'existe plus.
+
+**L'axe a quitté le corpus**, en dernier, sur 182 cas, en même temps que le
+schéma de sortie et les onze endroits du harnais qui le lisaient. `N9-b`, la
+règle transitoire qui interdisait de poser le drapeau, disparaît avec lui : il
+ne reste plus rien à interdire.
+
+### Ce que l'ordre a protégé
+
+Retirer les 182 assertions en premier aurait enlevé le garde-fou pendant la
+bascule : rien n'aurait plus signalé un prompt qui recommence à poser le drapeau.
+Les deux premiers étages sont sûrs dans les deux sens, le troisième ne l'est pas.
+
+### Ce qui reste debout, et pourquoi
+
+**La table `intentions`**, vide et dormante. Elle passe par la synchro, donc la
+supprimer serait une migration de schéma sur des répliques qui vivent sur
+d'autres appareils, pour aucun gain. Sa purge continue de vider ce que les
+anciennes versions y ont laissé.
+
+**Un test qui pose le drapeau à VRAI**, exprès, et vérifie qu'il ne fait plus
+rien perdre. C'est le seul endroit du dépôt où il apparaît encore. Une vieille
+réplique peut le poser en synchro : ce test dit ce qu'il en coûte, c'est-à-dire
+rien.
+
+**Le contrôle « capture sans trace durable »** du gate. Il mentionnait
+l'éphémère, il ne le mentionne plus, mais il reste : ce qu'il garde n'a jamais
+été le drapeau, c'est la question. La capture a-t-elle laissé quelque chose ?
