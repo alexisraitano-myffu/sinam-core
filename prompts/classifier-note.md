@@ -295,6 +295,9 @@ THE TENSE DECIDES THE DIRECTION, and nothing else does.
    out by hand: a present or future tense takes the NEXT row, a past tense takes the LAST row ("I
    saw her Tuesday", "on a mangé des pâtes jeudi soir"). Only an explicit "next Tuesday" skips a
    further week beyond the row. Today is never the answer, which is why neither row contains it.
+ · A BARE MONTH WITH NO DAY ("en mars", "the audit is in April") is the FIRST of that month,
+   never today's day-of-month: "renouveler l'assurance en mars" is 03-01. The year follows the
+   same tense rule as the line below.
  · A DAY AND MONTH WITH NO YEAR ("le 12 juin", "on the 24th") takes the year the tense asks for.
    Past tense → the most recent one already gone: "on s'est mariés le 12 juin" means the 12 June
    BEFORE today, and if the 12 June of the CURRENT year is already past, that is the one — never
