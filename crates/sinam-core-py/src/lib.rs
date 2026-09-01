@@ -1116,6 +1116,27 @@ fn pairing_code_confirm_verify(
     ))
 }
 
+/// L'empreinte du CONTENU des sources compilées dans cette roue.
+///
+/// Sert à répondre à une seule question, et elle a coûté deux jours : la roue
+/// installée est-elle celle du dépôt d'aujourd'hui ? La version du paquet ne
+/// le dit pas, elle reste en 0.1.0 d'une construction à l'autre.
+#[pyfunction]
+fn empreinte_source() -> &'static str {
+    env!("SINAM_EMPREINTE_SOURCE")
+}
+
+/// La version de prompts que ce cœur attend, gravée à la compilation.
+///
+/// À comparer avec celle réellement déployée dans `SYNAPSE_HOME/prompts` :
+/// réinstaller le binaire bundlé y recopie les prompts de son paquet, ce qui
+/// peut faire RECULER la version déployée sans que rien ne le dise, et les
+/// fichiers portent alors la date du jour.
+#[pyfunction]
+fn version_prompts_attendue() -> u32 {
+    env!("SINAM_VERSION_PROMPTS").parse().unwrap_or(0)
+}
+
 #[pymodule(name = "sinam_core")]
 fn sinam_core_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Embedder>()?;
@@ -1137,6 +1158,8 @@ fn sinam_core_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(extract_urls, m)?)?;
     m.add_function(wrap_pyfunction!(extract_page, m)?)?;
     m.add_function(wrap_pyfunction!(fetch_and_extract, m)?)?;
+    m.add_function(wrap_pyfunction!(empreinte_source, m)?)?;
+    m.add_function(wrap_pyfunction!(version_prompts_attendue, m)?)?;
     m.add("EMBEDDING_DIM", sinam_core::EMBEDDING_DIM)?;
     Ok(())
 }

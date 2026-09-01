@@ -14,3 +14,6 @@ crate-type = ["cdylib"]
 serde_json = { version = "1", features = ["preserve_order"] }
 sinam-core = { workspace = true }
 pyo3 = { version = "0.29", features = ["extension-module", "abi3-py311"] }
+
+[build-dependencies]
+sha2 = "0.10"
