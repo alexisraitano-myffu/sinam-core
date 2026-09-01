@@ -1060,3 +1060,28 @@ gate, `g-english-writing` (« Write the thank-you note for the Dupont family »)
 la première forme est « répondre à », la seconde « produire un texte pour
 quelqu'un », et c'est la seconde qui tombait le plus franchement. Deux formes
 distinctes, deux gardes.
+
+---
+
+## 2026-09-01 — Un mois nu datait au quantième d'aujourd'hui
+
+`N0-b` traitait le jour de semaine nu et le jour+mois sans année. Pas le mois
+seul. Sans règle, le modèle reprenait le quantième du jour : « next replacement
+due in October » sortait au 13 octobre, parce que la date figée du harnais est
+le 13 juillet.
+
+Ce n'était pas qu'une date approximative. La capture porte une corvée déjà faite
+suivie d'une échéance, et l'échéance est la seule chose qu'elle apporte. Elle
+était donc fausse là où elle comptait.
+
+La règle est posée dans le bloc DATES, au-dessus de la ligne du jour+mois dont
+elle réutilise la résolution d'année. Elle est recopiée dans les deux moitiés,
+comme tout le bloc, et le contrôle du harnais le vérifie au caractère près.
+
+L'exemple du prompt dit « en mars » et non « in October » : citer dans le prompt
+la phrase exacte d'un cas de corpus lui retirerait sa valeur de garde. Même
+précaution que pour `N0-c` le même jour.
+
+Contrôlé sur les douze cas de la famille date : le cas visé passe au vert, le
+témoin voisin reste vert, aucun autre ne bouge. Les trois rouges restants
+(récurrence, `kind`, confiance) sont antérieurs et sans rapport.
