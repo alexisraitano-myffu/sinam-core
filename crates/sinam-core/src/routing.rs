@@ -213,7 +213,6 @@ pub struct RouteReport {
     /// `created_note_id` pour tout ce qui n'en attendait qu'un.
     pub created_note_ids: Vec<String>,
     pub project_syntheses: Vec<ProjectSynthesis>,
-    pub fast_exit: bool,
     pub negations: NegationOutcome,
     /// Tâches retirées du backlog parce qu'une capture les annulait.
     pub cancelled_tasks: i64,
@@ -319,7 +318,6 @@ impl Brain {
 
         let mut report = RouteReport::default();
 
-        let is_ephemeral = truthy(classified.get("is_ephemeral"));
         // une capture peut laisser PLUSIEURS souvenirs. Ce qui suit
         // ne lit plus les champs au singulier mais la liste, qui les englobe :
         // sans `memories`, elle contient exactement le souvenir d'avant.
@@ -328,32 +326,15 @@ impl Brain {
             .first()
             .map(|s| s.kind.clone())
             .unwrap_or_else(|| "note".to_string());
-        // « La capture laisse-t-elle quelque chose de durable ? » se lit
-        // maintenant sur TOUS ses souvenirs : un seul suffit, sinon un épisode
-        // accompagné d'une tâche perdrait la garde que la tâche lui apporte.
-        let durable_note = souvenirs
-            .iter()
-            .any(|s| s.kind == "task" || s.kind == "event");
-
         let conn = self.storage.lock()?;
 
-        // Pure ephemeral fast exit (no entities, no project, no durable note).
-        if is_ephemeral
-            && !(truthy(classified.get("entities"))
-                || truthy(classified.get("project_entries"))
-                || durable_note)
-        {
-            conn.execute_batch("BEGIN")?;
-            let r = (|| -> Result<(), CoreError> {
-                self.propose_project_attach_if_similar(&conn, capture_id, content, None)?;
-                handle_intentions(&conn, classified, ctx)?;
-                mark(&conn, capture_id, &ctx.now, "processed")?;
-                Ok(())
-            })();
-            finish_txn(&conn, r)?;
-            report.fast_exit = true;
-            return Ok(report);
-        }
+        // Il y avait ici une sortie rapide : une capture marquée éphémère et
+        // dépourvue d'entité, de projet et de souvenir durable était traitée
+        // sans rien écrire d'autre qu'une intention de 48 h. C'était le chemin
+        // de perte, et il n'avait pas besoin que le drapeau soit juste pour
+        // faire des dégâts : une bascule à tort suffisait à effacer la capture
+        // sans laisser de trace ni de question. Retiré le 2026-09-01, après
+        // que la règle qui posait le drapeau a quitté le document.
 
         // Resolve (step 2) outside the transaction, like Python.
         let resolved = if truthy(classified.get("entities")) {
@@ -403,12 +384,6 @@ impl Brain {
             // Atomic note (gates), une par souvenir.
             let mut created_note_id: Option<String> = None;
             for souvenir in &souvenirs {
-                if is_ephemeral && !(souvenir.kind == "task" || souvenir.kind == "event") {
-                    // La garde de l'éphémère se lit souvenir par souvenir, pas
-                    // sur la capture entière : sinon une tâche durable ferait
-                    // survivre la note contemplative qui l'accompagne.
-                    continue;
-                }
                 let note_kind = souvenir.kind.clone();
                 let mut mentioned: Vec<String> = arr(classified.get("entities"))
                     .iter()
@@ -542,7 +517,7 @@ impl Brain {
             }
 
             // Soft project-attach proposal for unrouted actionable captures.
-            if seen_projects.is_empty() && (note_kind == "task" || is_ephemeral) {
+            if seen_projects.is_empty() && note_kind == "task" {
                 let attach_content = souvenirs
                     .first()
                     .map(|s| s.texte.as_str())
@@ -555,7 +530,7 @@ impl Brain {
                 )?;
             }
 
-            handle_intentions(&conn, classified, ctx)?;
+            handle_intentions(&conn, ctx)?;
 
             // a new mention reactivates the notes referencing it.
             let mentioned: Vec<String> = arr(classified.get("entities"))
@@ -646,7 +621,6 @@ impl Brain {
             let laisse_une_trace = created_note_id.is_some()
                 || !report.new_facts.is_empty()
                 || !seen_projects.is_empty()
-                || is_ephemeral
                 || !arr(classified.get("relations")).is_empty()
                 || !arr(classified.get("resources")).is_empty()
                 || report.negations.applied > 0
@@ -700,7 +674,6 @@ impl Brain {
             "new_facts": report.new_facts,
             "created_note_id": report.created_note_id,
             "created_note_ids": report.created_note_ids,
-            "fast_exit": report.fast_exit,
             "cancelled_tasks": report.cancelled_tasks,
             "cancellations_proposed": report.cancellations_proposed,
             "negations": {
@@ -1254,12 +1227,36 @@ impl Brain {
                         p == "event_date" || p == "occurs_on"
                     })
                     .unwrap_or(false);
+            // Symétrique exact de `date_redite`, et pour la même raison : le
+            // PRÉDICAT est un discriminant stable là où la persistance flotte.
+            // Un prédicat à valeur unique est, par définition de
+            // `SINGLE_VALUED_FAMILIES`, une affirmation que la mémoire sait
+            // périmer et remplacer. C'est donc exactement ce qu'une fiche est
+            // faite pour porter, et la liste n'est pas recopiée ici : c'est
+            // celle qui pilote déjà le supersede.
+            //
+            // Mesuré le 2026-09-01 sur le prompt du jour : trois des sept
+            // prédicats canoniques sortent à 3 et tombaient donc sous le
+            // palier. « Marie 06 12 34 56 78 » ne laissait plus rien, alors que
+            // « l'e-mail de Marie c'est … », mot pour mot la même forme, sortait
+            // à 4 et créait la fiche. Le modèle décidait de la fiche par un
+            // chiffre dont le core documente lui-même l'instabilité.
+            //
+            // La coordonnée ne DISPENSE pas de preuve, elle ramène au plancher
+            // ordinaire : une persistance de 2 reste exigée, donc une mention
+            // vraiment jetable ne passe toujours pas.
+            let porte_une_coordonnee = res.facts.iter().any(|f| {
+                f.get("predicate")
+                    .and_then(Value::as_str)
+                    .map(|p| single_valued_family(p).is_some())
+                    .unwrap_or(false)
+            });
             let seule_au_monde = !connue
                 && !dans_un_lien
                 && !porte_un_lien
                 && res.facts.len() <= 1
                 && mention_count <= 1;
-            let palier = if seule_au_monde {
+            let palier = if seule_au_monde && !porte_une_coordonnee {
                 LONE_ENTITY_PERSISTENCE
             } else {
                 MIN_ENTITY_PERSISTENCE
@@ -2907,71 +2904,19 @@ fn mark(conn: &Connection, entry_id: &str, now: &str, status: &str) -> Result<()
     Ok(())
 }
 
-/// Port of `handle_intentions` (expired purge + optional insert).
-fn handle_intentions(
-    conn: &Connection,
-    classified: &Value,
-    ctx: &RouteContext,
-) -> Result<(), CoreError> {
+/// Purge des intentions expirées, et rien d'autre depuis le 2026-09-01.
+///
+/// La fonction insérait aussi une intention quand la capture était marquée
+/// éphémère. Ce chemin est retiré ; la TABLE reste, vide et dormante, parce
+/// qu'elle passe par la synchro et que la supprimer serait une migration de
+/// schéma sur des répliques qui vivent sur d'autres appareils, pour aucun gain.
+/// La purge continue donc de vider ce que les anciennes versions y ont laissé.
+fn handle_intentions(conn: &Connection, ctx: &RouteContext) -> Result<(), CoreError> {
     conn.execute(
         "DELETE FROM intentions WHERE created_at < ?1 AND resolved = 0",
         params![ctx.intentions_cutoff],
     )?;
-    let is_ephemeral = truthy(classified.get("is_ephemeral"));
-    if is_ephemeral {
-        let source = classified
-            .get("ephemeral_content")
-            .filter(|v| truthy(Some(v)))
-            .cloned()
-            .unwrap_or_else(|| classified.get("summary").cloned().unwrap_or(json!("")));
-        let content = intention_text(&source);
-        if !content.is_empty() {
-            conn.execute(
-                "INSERT INTO intentions (id, content, ttl_hours) VALUES (?1,?2,?3)",
-                params![new_uuid(), content, 48],
-            )?;
-        }
-    }
     Ok(())
-}
-
-/// Port of `_intention_text` (dict/list coercion into TEXT).
-fn intention_text(value: &Value) -> String {
-    let mut v = value.clone();
-    if let Value::Object(m) = &v {
-        v = m
-            .get("content")
-            .filter(|x| truthy(Some(x)))
-            .or_else(|| m.get("text").filter(|x| truthy(Some(x))))
-            .or_else(|| m.get("description").filter(|x| truthy(Some(x))))
-            .or_else(|| m.get("items").filter(|x| truthy(Some(x))))
-            .cloned()
-            .unwrap_or_else(|| Value::String(py_dumps(&v)));
-    }
-    if let Value::Array(items) = &v {
-        let joined: Vec<String> = items
-            .iter()
-            .filter(|x| truthy(Some(x)))
-            .map(py_scalar_str)
-            .collect();
-        v = Value::String(joined.join(" · "));
-    }
-    match &v {
-        Value::Null => String::new(),
-        Value::String(s) => s.trim().to_string(),
-        other => py_scalar_str(other).trim().to_string(),
-    }
-}
-
-/// Python `str()` of a JSON scalar (dicts/lists via py_dumps-ish repr are
-/// not needed on the corpus; keep JSON text for them).
-fn py_scalar_str(v: &Value) -> String {
-    match v {
-        Value::String(s) => s.clone(),
-        Value::Bool(b) => if *b { "True".into() } else { "False".into() },
-        Value::Null => "None".into(),
-        other => other.to_string(),
-    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -4316,23 +4261,33 @@ mod tests {
     }
 
     #[test]
-    fn lephemere_se_lit_souvenir_par_souvenir() {
-        // Une capture éphémère qui porte AUSSI une tâche durable : la tâche
-        // s'écrit, la note contemplative qui l'accompagne non. Lue sur la
-        // capture entière, la garde laissait passer les deux.
+    fn le_drapeau_ephemere_ne_peut_plus_rien_faire_perdre() {
+        // Ce test remplace `lephemere_se_lit_souvenir_par_souvenir`, qui
+        // vérifiait que la note contemplative accompagnant une tâche était
+        // ÉCARTÉE. C'est ce comportement qui est retiré, pas le test : le
+        // drapeau ne pilote plus rien.
+        //
+        // Le sens de l'assertion s'inverse donc, et c'est le point : une
+        // capture marquée éphémère laisse maintenant TOUT. Le champ existe
+        // encore dans le schéma, et d'anciennes répliques peuvent le poser à
+        // vrai en synchro ; ce test dit qu'il ne coûte plus rien.
         let mut c = abandon();
         c["is_ephemeral"] = json!(true);
+        c["ephemeral_content"] = json!("envie de pain");
         c["memories"] = json!([
             {"note": "Acheter du pain", "kind": "note"},
             {"note": "Payer le loyer avant vendredi", "kind": "task",
              "event_date": "2026-07-17"}
         ]);
         let brain = router_contenu("acheter du pain, payer le loyer avant vendredi", c);
-        assert_eq!(compte(&brain, "SELECT COUNT(*) FROM atomic_notes"), 1);
         assert_eq!(
-            compte(&brain, "SELECT COUNT(*) FROM atomic_notes WHERE kind = 'task'"),
-            1
+            compte(&brain, "SELECT COUNT(*) FROM atomic_notes"),
+            2,
+            "les deux souvenirs s'écrivent, le drapeau ne filtre plus"
         );
+        // Et rien ne part plus dans la table des intentions, qui reste en
+        // place, vide et dormante, parce qu'elle passe par la synchro.
+        assert_eq!(compte(&brain, "SELECT COUNT(*) FROM intentions"), 0);
     }
 
     // ── Une capture qui n'a rien laissé ─────────────────────────────────
@@ -4599,6 +4554,45 @@ mod tests {
             );
             assert_eq!(compte(&brain, "SELECT COUNT(*) FROM entity_creation_proposals"), 1);
         }
+    }
+
+    #[test]
+    fn une_coordonnee_seule_fait_naitre_sa_fiche_sous_le_palier() {
+        // « Marie 06 12 34 56 78 » : une personne inconnue, une seule mention,
+        // un seul fait, et le modèle note ce fait à 3. Sous le palier d'entité
+        // seule, la fiche était perdue et le numéro avec, sans question posée.
+        //
+        // Les sept prédicats canoniques passent par la même porte. Trois
+        // d'entre eux sortaient à 3 le 2026-09-01 (`phone`, `job_title`,
+        // `age`), quatre à 4 ou plus : c'est ce partage arbitraire que ce
+        // plancher supprime.
+        for predicat in ["phone", "job_title", "age", "lives_in", "email", "works_at"] {
+            let mut c = capture_fete(3);
+            c["entities"][0]["facts"] = json!([{
+                "predicate": predicat, "value": "x", "persistence_value": 3,
+                "evidence_strength": "explicit", "category": "identity"
+            }]);
+            let brain = router_entite(c);
+            assert_eq!(
+                compte(&brain, "SELECT COUNT(*) FROM entities"),
+                1,
+                "{predicat} : une coordonnée doit fonder sa fiche"
+            );
+        }
+    }
+
+    #[test]
+    fn une_coordonnee_ne_dispense_pas_du_plancher_ordinaire() {
+        // La coordonnée ramène au plancher de 2, elle ne le supprime pas.
+        // Sans ce témoin, remplacer le palier par un court-circuit complet
+        // passerait inaperçu : le test précédent resterait vert.
+        let mut c = capture_fete(1);
+        c["entities"][0]["facts"] = json!([{
+            "predicate": "phone", "value": "x", "persistence_value": 1,
+            "evidence_strength": "explicit", "category": "identity"
+        }]);
+        let brain = router_entite(c);
+        assert_eq!(compte(&brain, "SELECT COUNT(*) FROM entities"), 0);
     }
 
     #[test]

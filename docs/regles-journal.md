@@ -902,3 +902,54 @@ qui n'a JAMAIS été mesuré, et des écarts de deux ou trois points ont été
 commentés toute la journée comme s'ils signifiaient quelque chose. Les cinq
 baselines `syn224-essai1..5` ne servent pas à l'estimer : leurs empreintes de
 prompt diffèrent, ce sont cinq prompts et non cinq lancers.
+
+## 2026-09-01 — Trois prédicats canoniques sur sept tombaient sous le verrou
+
+Le défaut est arrivé par un test rouge, `test_phone_fragment`, découvert en
+réinstallant la wheel le 30/08. « Marie 06 12 34 56 78 » ne laissait plus rien.
+
+Le prompt faisait pourtant son travail : il créait la fiche, nommait le prédicat
+canonique, sortait la valeur. Il notait simplement la persistance à 3, et le
+palier exigé d'une entité seule au monde est passé de 2 à 4 le 28/08. La fiche
+était donc écartée, sans note, sans question, sans trace.
+
+**La mesure a élargi le sujet.** Les sept prédicats canoniques de `G3-b` passés
+un par un dans le prompt du jour, le 2026-09-01 :
+
+| prédicat | persistance | fiche |
+|---|---|---|
+| `has_birthday` | 5 | oui |
+| `email` · `works_at` · `lives_in` | 4 | oui |
+| `phone` · `job_title` · `age` | 3 | **perdue** |
+
+Trois sur sept, pas un. Et le partage n'a aucun sens lisible : `job_title` sort à
+3 quand `works_at` sort à 4 sur des phrases de même forme, à propos de la même
+personne.
+
+### Pourquoi la correction est allée dans le code et pas dans le prompt
+
+Le ticket proposait deux voies et préférait la voie prompt, plus fidèle à l'ordre
+règles → prompt. La mesure a renversé ce choix, et l'argument était déjà écrit
+dans le core : `routing.rs` documente, mesure du 28/08 à l'appui, que **le modèle
+sort 3 ou 4 sur la MÊME capture d'une passe à l'autre**. C'est d'ailleurs pour ça
+que le garde-fou voisin, celui de la date redite, se lit sur le PRÉDICAT et pas
+sur un chiffre.
+
+Compléter l'échelle de `G4-c` aurait donc demandé au modèle d'être fiable sur
+exactement le nombre dont le document dit qu'il flotte. La correction aurait pu
+être verte à la mesure et retomber à la passe suivante.
+
+`G4-g` est le symétrique positif de la date redite : là où un fait qui n'est que
+la date de l'occurrence ne prouve RIEN quelle que soit sa persistance, un fait
+qui porte un prédicat à valeur unique ramène au plancher ordinaire de 2.
+
+**La liste n'est pas recopiée**, et c'est le point qui fait tenir la règle :
+c'est `SINGLE_VALUED_FAMILIES`, celle qui pilote déjà le remplacement d'une
+valeur par la suivante. Un prédicat y figure précisément parce que la mémoire
+sait le périmer, donc parce qu'une fiche est faite pour le porter. La règle ne
+dit pas « ces sept-là sont importants », elle dit « ce que la mémoire sait
+remplacer mérite d'exister ».
+
+La coordonnée ne dispense pas de preuve, elle ramène au plancher : une
+persistance de 1 ne passe toujours pas, et un test témoin le vérifie. Sans lui,
+remplacer le palier par un court-circuit complet resterait vert.
