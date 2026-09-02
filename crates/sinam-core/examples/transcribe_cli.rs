@@ -27,6 +27,10 @@ fn main() {
     let mut prompt = None;
     let mut vad = None;
     let mut threads = 4;
+    let mut audio_ctx: Option<i32> = None;
+    let mut chunk: Option<f32> = None;
+    let mut plain = false;
+    let mut carry = 0usize;
     let mut it = std::env::args().skip(1);
     while let Some(flag) = it.next() {
         let mut value = || it.next().unwrap_or_else(|| fail(&format!("{flag} attend une valeur")));
@@ -37,6 +41,10 @@ fn main() {
             "--prompt" => prompt = Some(value()),
             "--vad" => vad = Some(value()),
             "--threads" => threads = value().parse().unwrap_or(4),
+            "--audio-ctx" => audio_ctx = value().parse().ok(),
+            "--chunk" => chunk = value().parse().ok(),
+            "--text" => plain = true,
+            "--carry" => carry = value().parse().unwrap_or(0),
             other => fail(&format!("option inconnue : {other}")),
         }
     }
@@ -47,17 +55,60 @@ fn main() {
     let decoder = Transcriber::new(&model)
         .unwrap_or_else(|e| fail(&format!("modèle : {e}")))
         .with_threads(threads);
-    let out = decoder
-        .transcribe(
-            &pcm,
-            &TranscribeOptions {
-                language: lang,
-                initial_prompt: prompt,
-                vad_model_path: vad,
-                ..Default::default()
-            },
-        )
-        .unwrap_or_else(|e| fail(&format!("décodage : {e}")));
+    let opts = TranscribeOptions {
+        language: lang,
+        initial_prompt: prompt,
+        vad_model_path: vad,
+        audio_ctx,
+        ..Default::default()
+    };
+
+    // `--chunk` rejoue EXACTEMENT ce que fait le téléphone : la parole y est
+    // découpée en tranches décodées séparément, donc chaque tranche perd le
+    // contexte de la précédente. Sans ce mode, une mesure faite sur le fichier
+    // entier flatte le chemin de capture au lieu de le décrire.
+    let pieces: Vec<Vec<f32>> = match chunk {
+        Some(seconds) if seconds > 0.0 => {
+            let n = (seconds * sinam_core::SAMPLE_RATE_HZ as f32) as usize;
+            pcm.chunks(n.max(1)).map(<[f32]>::to_vec).collect()
+        }
+        _ => vec![pcm],
+    };
+
+    let mut out = None;
+    let mut textes = Vec::new();
+    for piece in &pieces {
+        // `--carry` rend à la tranche suivante les derniers mots de la
+        // précédente. whisper tronque l'amorçage par la fin, donc ce report
+        // se place APRÈS les noms : c'est lui qui doit survivre.
+        let mut opts = opts.clone();
+        if carry > 0 {
+            let mots: Vec<&str> = textes
+                .iter()
+                .flat_map(|t: &String| t.split_whitespace())
+                .collect();
+            let queue = mots[mots.len().saturating_sub(carry)..].join(" ");
+            if !queue.is_empty() {
+                opts.initial_prompt = Some(match &opts.initial_prompt {
+                    Some(p) => format!("{p} {queue}"),
+                    None => queue,
+                });
+            }
+        }
+        let t = decoder
+            .transcribe(piece, &opts)
+            .unwrap_or_else(|e| fail(&format!("décodage : {e}")));
+        if !t.text.trim().is_empty() {
+            textes.push(t.text.trim().to_string());
+        }
+        out = Some(t);
+    }
+    let out = out.unwrap_or_else(|| fail("aucun échantillon"));
+
+    if plain {
+        println!("{}", textes.join(" "));
+        return;
+    }
 
     for seg in &out.segments {
         println!(

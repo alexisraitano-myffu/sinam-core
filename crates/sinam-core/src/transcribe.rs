@@ -355,6 +355,11 @@ mod decoder {
         /// c'est ce qui l'empêche d'inventer sur un blanc, et ça coûte moins
         /// cher que de décoder du silence.
         pub vad_model_path: Option<String>,
+        /// Taille de la fenêtre encodée, en trames (1500 = les 30 s pleines).
+        /// `None` la ramène à la durée réelle, ce qui est le réglage de la
+        /// capture ; les mesures s'en servent pour isoler ce que cette
+        /// réduction coûte en qualité.
+        pub audio_ctx: Option<i32>,
         pub guard: SpeechGuard,
     }
 
@@ -498,13 +503,23 @@ mod decoder {
 
             // whisper encode TOUJOURS une fenêtre de 30 s : une capture de 6 s
             // est complétée par du vide, et l'encodeur paie le vide plein pot.
-            // Réduire le contexte audio à la durée réelle est le plus gros
-            // levier de vitesse sur un téléphone, et il est gratuit en qualité
-            // tant qu'on garde une marge (mesuré : rien ne bouge dans le texte).
-            // 1500 trames = 30 s.
+            // Ramener la fenêtre à la durée réelle est le plus gros levier de
+            // vitesse sur un téléphone.
+            //
+            // ⚠️ **La marge n'est pas un détail de réglage, et cette réduction
+            // n'est PAS gratuite.** Mesuré sur trente captures réelles avec
+            // `small` : une marge de +128 trames coûte 4,4 points de taux
+            // d'erreur mot (22,4 % contre 18,0 % à fenêtre pleine), tandis que
+            // +300 rend **exactement** la qualité de la fenêtre pleine pour
+            // 0,7× le temps réel au lieu de 1,4×. Le palier est net et non
+            // progressif : entre les deux valeurs il n'y a rien à grappiller,
+            // et rogner cette marge pour gagner une seconde reprend d'un coup
+            // les quatre points. 1500 trames = 30 s.
             let seconds = entree.len() as f32 / SAMPLE_RATE_HZ as f32;
-            let ctx = ((seconds / 30.0 * 1500.0).ceil() as i32 + 128).clamp(256, 1500);
-            params.set_audio_ctx(ctx);
+            let ctx = opts.audio_ctx.unwrap_or_else(|| {
+                ((seconds / 30.0 * 1500.0).ceil() as i32 + 300).clamp(600, 1500)
+            });
+            params.set_audio_ctx(ctx.clamp(0, 1500));
 
             state
                 .full(params, entree)
