@@ -788,6 +788,41 @@ impl Brain {
 
 // ── Transcription vocale ────────────────────────────────────────────────────
 
+/// Une entité candidate à l'amorçage, telle qu'un hôte peut la décrire.
+#[derive(uniffi::Record)]
+pub struct VoiceNameCandidate {
+    pub name: String,
+    pub aliases: Vec<String>,
+    /// Type d'entité, vide si inconnu.
+    pub kind: String,
+    pub strength: f64,
+    pub mentions: i64,
+}
+
+/// Classe des noms pour l'amorçage, sans passer par la base du cœur.
+///
+/// C'est le point d'entrée des hôtes qui n'ont PAS de base du cœur mais ont un
+/// réplica du graphe, c'est-à-dire tout téléphone client. Sans lui, il aurait
+/// fallu recopier la règle de classement côté app, où elle aurait dérivé du
+/// jour au lendemain : ici il n'en existe qu'une.
+#[uniffi::export]
+pub fn rank_voice_names(
+    candidates: Vec<VoiceNameCandidate>,
+    include_aliases: bool,
+) -> Vec<String> {
+    let inner: Vec<sinam_core::NameCandidate> = candidates
+        .into_iter()
+        .map(|c| sinam_core::NameCandidate {
+            name: c.name,
+            aliases: c.aliases,
+            kind: c.kind,
+            strength: c.strength,
+            mentions: c.mentions,
+        })
+        .collect();
+    sinam_core::rank_names(inner, include_aliases)
+}
+
 /// Un morceau de transcription, avec de quoi juger ce qu'il vaut.
 #[cfg(feature = "voice")]
 #[derive(uniffi::Record)]

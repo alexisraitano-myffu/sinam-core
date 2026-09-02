@@ -83,37 +83,91 @@ impl Default for PrimeOptions {
 /// amorcer avec un nom que le produit a déjà retiré du graphe, c'est pousser le
 /// décodeur à le réécrire.
 pub fn graph_names(conn: &Connection, opts: &PrimeOptions) -> Result<Vec<String>, CoreError> {
-    // Une seule source pour la liste des types : la constante ci-dessus.
-    let proper: String = PROPER_NOUN_TYPES
-        .iter()
-        .map(|t| format!("'{t}'"))
-        .collect::<Vec<_>>()
-        .join(", ");
-    let mut stmt = conn.prepare(&format!(
-        "SELECT canonical_name, aliases, \
-                CASE WHEN COALESCE(type, '') IN ({proper}) \
-                       OR SUBSTR(canonical_name, 1, 1) <> \
-                          LOWER(SUBSTR(canonical_name, 1, 1)) \
-                     THEN 0 ELSE 1 END AS name_rank \
+    let mut stmt = conn.prepare(
+        "SELECT canonical_name, aliases, COALESCE(type, ''), \
+                COALESCE(memory_strength, 0.0), COALESCE(mention_count, 0) \
          FROM entities \
          WHERE COALESCE(status, 'active') = 'active' \
            AND archived_at IS NULL \
            AND merged_into_id IS NULL \
            AND canonical_name IS NOT NULL \
            AND TRIM(canonical_name) <> '' \
-         ORDER BY name_rank ASC, \
-                  COALESCE(memory_strength, 0.0) DESC, \
+         ORDER BY COALESCE(memory_strength, 0.0) DESC, \
                   COALESCE(mention_count, 0) DESC, \
                   canonical_name ASC \
-         LIMIT ?1"
-    ))?;
+         LIMIT ?1",
+    )?;
     let rows = stmt.query_map([opts.max_names as i64], |r| {
-        Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?))
+        Ok(NameCandidate {
+            name: r.get(0)?,
+            // `aliases` est un tableau JSON écrit par l'hôte ; un contenu
+            // illisible n'est pas une erreur, on garde le nom canonique.
+            aliases: r
+                .get::<_, Option<String>>(1)?
+                .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
+                .and_then(|v| v.as_array().cloned())
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(|i| i.as_str().map(|s| s.to_string()))
+                        .collect()
+                })
+                .unwrap_or_default(),
+            kind: r.get(2)?,
+            strength: r.get(3)?,
+            mentions: r.get(4)?,
+        })
     })?;
+    let mut candidates: Vec<NameCandidate> = Vec::new();
+    for row in rows {
+        candidates.push(row?);
+    }
+    Ok(rank_names(candidates, opts.include_aliases))
+}
+
+/// Une entité candidate à l'amorçage, telle que n'importe quel hôte peut la
+/// décrire. Elle existe pour que le classement ait UNE implémentation : le
+/// cœur la lit de sa propre base, l'app mobile la lit de son réplica local, et
+/// les deux passent par `rank_names`. Un téléphone client n'a pas de base du
+/// cœur, mais il a le réplica du graphe : sans ce point d'entrée, il aurait
+/// fallu recopier la règle côté app, où elle aurait dérivé.
+#[derive(Debug, Clone)]
+pub struct NameCandidate {
+    pub name: String,
+    pub aliases: Vec<String>,
+    /// Type d'entité, vide si inconnu.
+    pub kind: String,
+    pub strength: f64,
+    pub mentions: i64,
+}
+
+/// Le classement, et lui seul.
+///
+/// `memory_strength` d'abord, et c'est un choix : cette valeur porte déjà la
+/// décroissance d'Ebbinghaus, donc « le plus fort » veut dire « mentionné
+/// souvent ET récemment », ce qui est la meilleure prédiction disponible de ce
+/// que la prochaine capture va nommer. Le nombre de mentions départage, le nom
+/// rend l'ordre déterministe, donc testable.
+///
+/// Passent devant ceux qui ressemblent à des noms propres : capitale initiale
+/// **ou** type qui en garantit un. Les deux critères se rattrapent l'un
+/// l'autre, et il en faut deux : le vocabulaire des types est extensible par
+/// l'usage (`brand`, `device`, `restaurant` sont apparus après coup), donc une
+/// liste figée reléguerait au second rideau des noms comme Nuphy ou Kodawari
+/// Ramen, c'est-à-dire exactement ceux que le décodeur écorche ; et la capitale
+/// seule raterait les noms propres écrits en bas de casse (`oaio`, `sinam`).
+pub fn rank_names(mut candidates: Vec<NameCandidate>, include_aliases: bool) -> Vec<String> {
+    candidates.sort_by(|a, b| {
+        proper_rank(a)
+            .cmp(&proper_rank(b))
+            .then(b.strength.total_cmp(&a.strength))
+            .then(b.mentions.cmp(&a.mentions))
+            .then(a.name.cmp(&b.name))
+    });
 
     let mut out: Vec<String> = Vec::new();
     let mut seen: Vec<String> = Vec::new();
-    let push = |name: &str, out: &mut Vec<String>, seen: &mut Vec<String>| {
+    let mut push = |name: &str, out: &mut Vec<String>, seen: &mut Vec<String>| {
         let name = name.trim();
         if name.is_empty() || name.chars().count() > MAX_NAME_CHARS {
             return;
@@ -125,26 +179,30 @@ pub fn graph_names(conn: &Connection, opts: &PrimeOptions) -> Result<Vec<String>
         seen.push(key);
         out.push(name.to_string());
     };
-
-    for row in rows {
-        let (canonical, aliases) = row?;
-        push(&canonical, &mut out, &mut seen);
-        if !opts.include_aliases {
-            continue;
-        }
-        // `aliases` est un tableau JSON écrit par l'hôte ; un contenu illisible
-        // n'est pas une erreur de transcription, on garde le nom canonique.
-        if let Some(raw) = aliases {
-            if let Ok(serde_json::Value::Array(items)) = serde_json::from_str(&raw) {
-                for item in items {
-                    if let Some(alias) = item.as_str() {
-                        push(alias, &mut out, &mut seen);
-                    }
-                }
+    for candidate in &candidates {
+        push(&candidate.name, &mut out, &mut seen);
+        if include_aliases {
+            for alias in &candidate.aliases {
+                push(alias, &mut out, &mut seen);
             }
         }
     }
-    Ok(out)
+    out
+}
+
+/// 0 pour un nom propre, 1 pour le reste.
+fn proper_rank(c: &NameCandidate) -> u8 {
+    let capitale = c
+        .name
+        .trim()
+        .chars()
+        .next()
+        .is_some_and(|ch| ch.is_uppercase());
+    if capitale || PROPER_NOUN_TYPES.contains(&c.kind.as_str()) {
+        0
+    } else {
+        1
+    }
 }
 
 /// Estimation du coût en tokens d'un nom, sans tokenizer.

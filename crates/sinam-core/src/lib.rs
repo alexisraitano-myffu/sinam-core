@@ -42,7 +42,7 @@ pub use storage::{EntityHit, NoteHit, ResourceHit, Storage};
 // whisper.cpp (feature `voice`).
 pub use transcribe::{
     estimate_tokens, fit_names, graph_names, graph_prompt, join_names, pcm16_to_f32, pcm16le_to_f32,
-    PrimeOptions, PRIME_TOKEN_BUDGET, SAMPLE_RATE_HZ,
+    rank_names, NameCandidate, PrimeOptions, PRIME_TOKEN_BUDGET, SAMPLE_RATE_HZ,
 };
 #[cfg(feature = "voice")]
 pub use transcribe::{Segment, SpeechGuard, TranscribeOptions, Transcriber, Transcript};
