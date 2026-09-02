@@ -45,6 +45,8 @@ struct Args {
     threads: i32,
     json: Option<PathBuf>,
     brief: bool,
+    show_prompt: bool,
+    vad: Option<String>,
 }
 
 fn parse_args() -> Args {
@@ -55,6 +57,8 @@ fn parse_args() -> Args {
     let mut threads = 4;
     let mut json = None;
     let mut brief = false;
+    let mut show_prompt = false;
+    let mut vad = None;
     let mut it = std::env::args().skip(1);
     while let Some(flag) = it.next() {
         let mut value = || it.next().unwrap_or_else(|| fail(&format!("{flag} attend une valeur")));
@@ -66,6 +70,8 @@ fn parse_args() -> Args {
             "--threads" => threads = value().parse().unwrap_or(4),
             "--json" => json = Some(PathBuf::from(value())),
             "--brief" => brief = true,
+            "--show-prompt" => show_prompt = true,
+            "--vad" => vad = Some(value()),
             other => fail(&format!("option inconnue : {other}")),
         }
     }
@@ -80,6 +86,8 @@ fn parse_args() -> Args {
         threads,
         json,
         brief,
+        show_prompt,
+        vad,
     }
 }
 
@@ -113,6 +121,12 @@ struct Summary {
     names_total: usize,
     hits_nu: usize,
     hits_amorce: Option<usize>,
+    /// Noms effectivement présents dans le prompt, et le reste. Un amorçage
+    /// tenu par un budget n'entre pas tous les noms du graphe : mélanger les
+    /// deux populations noierait le gain sur ceux qu'il porte, et cacherait la
+    /// dégradation sur ceux qu'il ne porte pas.
+    amorces: (usize, usize, usize),
+    hors: (usize, usize, usize),
     wer_nu: f64,
     wer_amorce: Option<f64>,
     dropped_nu: usize,
@@ -168,16 +182,26 @@ fn main() {
         println!("\n════════ {label} ════════");
         if !prompt.is_empty() {
             println!("{} noms retenus dans le prompt", prompt.split(", ").count());
+            if args.show_prompt {
+                println!("{prompt}");
+            }
         }
         println!();
 
         let mut rows = Vec::new();
         for (case, pcm) in cases.iter().zip(&audio) {
-            let nu = transcribe(&decoder, pcm, case, args.lang.as_deref(), None);
+            let nu = transcribe(&decoder, pcm, case, args.lang.as_deref(), None, args.vad.as_deref());
             let amorce = if prompt.is_empty() {
                 None
             } else {
-                Some(transcribe(&decoder, pcm, case, args.lang.as_deref(), Some(&prompt)))
+                Some(transcribe(
+                    &decoder,
+                    pcm,
+                    case,
+                    args.lang.as_deref(),
+                    Some(&prompt),
+                    args.vad.as_deref(),
+                ))
             };
             if !args.brief {
                 print_case(case, &nu, amorce.as_ref());
@@ -185,7 +209,7 @@ fn main() {
             rows.push((case, nu, amorce));
         }
 
-        let summary = summarize(&label, &rows, audio_seconds);
+        let summary = summarize(&label, &rows, audio_seconds, &prompt);
         print_totals(&summary);
         if args.json.is_some() {
             json_models.insert(label.clone(), models_json(&rows, &prompt));
@@ -208,8 +232,26 @@ fn short_label(path: &str) -> String {
         .unwrap_or_else(|| path.to_string())
 }
 
-fn summarize(label: &str, rows: &[(&Case, Run, Option<Run>)], audio: f64) -> Summary {
+fn summarize(
+    label: &str,
+    rows: &[(&Case, Run, Option<Run>)],
+    audio: f64,
+    prompt: &str,
+) -> Summary {
     let amorce_partout = !rows.is_empty() && rows.iter().all(|(_, _, a)| a.is_some());
+    // (combien de noms, trouvés nu, trouvés amorcé) pour chaque population.
+    let mut amorces = (0usize, 0usize, 0usize);
+    let mut hors = (0usize, 0usize, 0usize);
+    for (case, nu, amorce) in rows {
+        for name in &case.names {
+            let bucket = if contains_name(prompt, name) { &mut amorces } else { &mut hors };
+            bucket.0 += 1;
+            bucket.1 += usize::from(contains_name(&nu.text, name));
+            if let Some(a) = amorce {
+                bucket.2 += usize::from(contains_name(&a.text, name));
+            }
+        }
+    }
     Summary {
         label: label.to_string(),
         names_total: rows.iter().map(|(c, _, _)| c.names.len()).sum(),
@@ -230,6 +272,8 @@ fn summarize(label: &str, rows: &[(&Case, Run, Option<Run>)], audio: f64) -> Sum
             .iter()
             .map(|(_, _, a)| a.as_ref().map_or(0.0, |r| r.seconds))
             .sum(),
+        amorces,
+        hors,
         audio,
     }
 }
@@ -240,10 +284,12 @@ fn transcribe(
     case: &Case,
     lang: Option<&str>,
     prompt: Option<&str>,
+    vad: Option<&str>,
 ) -> Run {
     let opts = TranscribeOptions {
         language: lang.map(|l| l.to_string()),
         initial_prompt: prompt.map(|p| p.to_string()),
+        vad_model_path: vad.map(|v| v.to_string()),
         ..Default::default()
     };
     let started = Instant::now();
@@ -455,6 +501,14 @@ fn print_totals(s: &Summary) {
             hits as i64 - s.hits_nu as i64,
             s.names_total
         );
+        println!(
+            "   dont dans le prompt : {}/{} nu → {}/{} amorcé",
+            s.amorces.1, s.amorces.0, s.amorces.2, s.amorces.0
+        );
+        println!(
+            "   hors du prompt      : {}/{} nu → {}/{} amorcé  (doit rester stable)",
+            s.hors.1, s.hors.0, s.hors.2, s.hors.0
+        );
     }
 }
 
@@ -489,8 +543,26 @@ fn print_table(table: &[Summary]) {
             );
         }
     }
+    println!();
+    println!("{:<24} {:>14} {:>14}", "", "noms amorcés", "noms hors");
+    for s in table {
+        if s.hits_amorce.is_none() {
+            continue;
+        }
+        println!(
+            "{:<24} {:>6} → {:<5} {:>6} → {:<5}",
+            s.label,
+            format!("{}/{}", s.amorces.1, s.amorces.0),
+            format!("{}", s.amorces.2),
+            format!("{}/{}", s.hors.1, s.hors.0),
+            format!("{}", s.hors.2),
+        );
+    }
     println!(
         "\nUn écart de ±1 ou 2 noms sur {names} est du bruit : un amorçage qui sert se voit franchement."
+    );
+    println!(
+        "La colonne « hors » est le garde-fou : elle doit rester stable, un amorçage qui la dégrade invente des noms."
     );
     println!(
         "Le temps réel se lit avec la feature utilisée : `voice` nu est le proxy du téléphone, `voice-metal` ne l'est pas."

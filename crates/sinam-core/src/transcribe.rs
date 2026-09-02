@@ -33,10 +33,16 @@ pub const SAMPLE_RATE_HZ: u32 = 16_000;
 /// au-delà de 224 obligerait à émettre les noms les plus forts en dernier.
 pub const PRIME_TOKEN_BUDGET: usize = 180;
 
-/// Types d'entités dont le nom est un nom propre, donc ceux que le décodeur
-/// n'a aucune chance de deviner. Les autres (`concept`, `tool`) sont le plus
-/// souvent des mots communs que le modèle écrit déjà bien : ils passent après,
-/// et seulement s'il reste du budget.
+/// Types d'entités dont le nom est un nom propre à coup sûr. La liste ne suffit
+/// PAS à elle seule : le vocabulaire des types est extensible par l'usage
+/// (`brand`, `device`, `restaurant` sont apparus après coup), donc une liste
+/// figée reléguerait au second rideau des noms comme Nuphy ou Kodawari Ramen,
+/// c'est-à-dire exactement ceux que le décodeur écorche. Elle est doublée d'un
+/// test sur la CAPITALE initiale, qui lui, ne dérive pas avec le vocabulaire.
+///
+/// Les deux ensemble se rattrapent l'un l'autre : la capitale attrape les
+/// marques et les lieux quel que soit leur type, le type attrape les noms
+/// propres écrits en bas de casse (`oaio`, `sinam`).
 const PROPER_NOUN_TYPES: &[&str] = &["person", "place", "organization", "project", "animal"];
 
 /// Au-delà, ce n'est plus un nom mais une phrase : ça mange le budget de
@@ -68,6 +74,11 @@ impl Default for PrimeOptions {
 /// disponible de ce que la prochaine capture va nommer. `mention_count`
 /// départage, le nom canonique rend l'ordre déterministe (donc testable).
 ///
+/// Passent devant les noms qui ressemblent à des noms propres : capitale
+/// initiale, ou type qui en garantit un. Les mots communs (`sérendipité`, un
+/// outil au nom générique) attendent qu'il reste du budget, parce que le
+/// décodeur les écrit déjà bien sans aide.
+///
 /// Les entités fusionnées, archivées ou en attente de validation sont exclues :
 /// amorcer avec un nom que le produit a déjà retiré du graphe, c'est pousser le
 /// décodeur à le réécrire.
@@ -81,6 +92,8 @@ pub fn graph_names(conn: &Connection, opts: &PrimeOptions) -> Result<Vec<String>
     let mut stmt = conn.prepare(&format!(
         "SELECT canonical_name, aliases, \
                 CASE WHEN COALESCE(type, '') IN ({proper}) \
+                       OR SUBSTR(canonical_name, 1, 1) <> \
+                          LOWER(SUBSTR(canonical_name, 1, 1)) \
                      THEN 0 ELSE 1 END AS name_rank \
          FROM entities \
          WHERE COALESCE(status, 'active') = 'active' \
@@ -194,27 +207,69 @@ pub use decoder::{Segment, Transcriber, TranscribeOptions, Transcript, SpeechGua
 mod decoder {
     use super::*;
     use whisper_rs::{
-        FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters,
+        FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters, WhisperVadContext,
+        WhisperVadContextParams, WhisperVadParams,
     };
 
-    /// Seuils de rejet des segments hallucinés.
+    /// Ce qui écarte une capture inventée.
     ///
-    /// whisper invente du texte plausible sur un silence ou un passage
-    /// inaudible. Les deux signaux ne suffisent qu'ENSEMBLE : une probabilité
-    /// de silence élevée seule condamne des phrases murmurées mais réelles, une
-    /// logprob basse seule condamne les noms propres, c'est-à-dire exactement
-    /// ce qu'on cherche à garder. Ce sont les seuils par défaut de whisper.cpp,
-    /// appliqués ici au niveau du segment plutôt qu'au décodage.
+    /// ⚠️ **Les deux signaux du décodeur ne séparent rien, c'est mesuré.** Le
+    /// premier réflexe est d'écarter un segment quand `no_speech_prob` est
+    /// haute ET `avg_logprob` basse, comme le fait whisper.cpp en interne. Sur
+    /// les modèles publiés (base, small et large-v3-turbo quantifiés),
+    /// `no_speech_prob` vaut **0 partout**, y compris sur du souffle de pièce
+    /// sans un mot : le jeton `<|nospeech|>` n'y est pas exploitable. Et la
+    /// logprob ne tranche pas non plus : souffle pur à -0,305 contre parole
+    /// réelle à -0,258, les deux plages se recouvrent. Une règle bâtie sur eux
+    /// est INERTE, et pire qu'absente puisqu'elle rassure.
+    ///
+    /// Ce qui marche, dans l'ordre :
+    ///
+    /// 1. le **détecteur de parole** ([`TranscribeOptions::vad_model_path`]) :
+    ///    le décodeur ne voit que ce qui est de la parole, donc il n'a rien à
+    ///    inventer. C'est la vraie porte. ⚠️ Il est appliqué ICI, à la main :
+    ///    whisper.cpp ne fait le filtrage que dans `whisper_full()`, jamais
+    ///    dans `whisper_full_with_state()` par lequel passe toute liaison qui
+    ///    gère son propre état. Poser le drapeau et le chemin du modèle ne
+    ///    produit alors **aucun effet et aucune erreur**, pas même avec un
+    ///    chemin inexistant ;
+    /// 2. la **forme du texte** : sur un blanc, whisper ne rend pas une phrase
+    ///    plausible, il rend une annotation de bruit (`*soupir*`, `[Musique]`,
+    ///    `(rires)`, `♪`). Ce n'est pas de la parole, ça ne doit pas devenir une
+    ///    note.
+    ///
+    /// Les deux nombres restent exposés sur [`Segment`] : ils servent au
+    /// diagnostic, pas à décider.
     #[derive(Debug, Clone)]
     pub struct SpeechGuard {
-        pub no_speech_max: f32,
-        pub logprob_min: f32,
+        /// Écarter les segments qui sont une annotation de bruit, pas de la
+        /// parole.
+        pub drop_sound_events: bool,
     }
 
     impl Default for SpeechGuard {
         fn default() -> Self {
-            Self { no_speech_max: 0.6, logprob_min: -1.0 }
+            Self { drop_sound_events: true }
         }
+    }
+
+    /// Un segment entièrement enfermé dans une notation d'événement sonore.
+    /// whisper les rend avec des marqueurs stables, quelle que soit la langue.
+    fn is_sound_event(text: &str) -> bool {
+        let t = text.trim();
+        if t.is_empty() {
+            return false;
+        }
+        // Le cas des points de suspension se teste AVANT de retirer la
+        // ponctuation finale, sinon il ne reste rien à tester.
+        if t.chars().all(|c| c == '.' || c == '…' || c.is_whitespace()) {
+            return true;
+        }
+        let t = t.trim_end_matches(['.', '!', '?']).trim();
+        const PAIRS: &[(char, char)] = &[('*', '*'), ('[', ']'), ('(', ')'), ('♪', '♪')];
+        PAIRS.iter().any(|(open, close)| {
+            t.starts_with(*open) && t.ends_with(*close) && t.chars().count() > 1
+        })
     }
 
     #[derive(Debug, Clone, Default)]
@@ -223,6 +278,11 @@ mod decoder {
         pub language: Option<String>,
         /// Amorçage textuel, typiquement le retour de [`graph_prompt`].
         pub initial_prompt: Option<String>,
+        /// Chemin du modèle de détection de parole (silero, environ 1 Mo).
+        /// Quand il est fourni, le décodeur ne voit que les passages parlés :
+        /// c'est ce qui l'empêche d'inventer sur un blanc, et ça coûte moins
+        /// cher que de décoder du silence.
+        pub vad_model_path: Option<String>,
         pub guard: SpeechGuard,
     }
 
@@ -249,6 +309,10 @@ mod decoder {
         pub needs_review: bool,
         /// Langue détectée par le modèle (ISO 639-1), quand il en rend une.
         pub language: Option<String>,
+        /// Faux quand le détecteur de parole n'a rien trouvé. L'hôte n'écrit
+        /// alors RIEN : une capture vide vaut mieux qu'une capture inventée, et
+        /// c'est la seule réponse honnête à un enregistrement sans parole.
+        pub speech_detected: bool,
     }
 
     /// Décodeur whisper.cpp chargé une fois, réutilisable.
@@ -330,8 +394,28 @@ mod decoder {
                 }
             }
 
+            // Filtrage de la parole en amont, jamais par le drapeau de
+            // whisper.cpp : voir la note sur `SpeechGuard`.
+            let parole;
+            let entree: &[f32] = match opts.vad_model_path.as_deref() {
+                Some(path) => {
+                    parole = speech_only(path, pcm)?;
+                    if parole.is_empty() {
+                        return Ok(Transcript {
+                            text: String::new(),
+                            segments: Vec::new(),
+                            needs_review: false,
+                            language: None,
+                            speech_detected: false,
+                        });
+                    }
+                    &parole
+                }
+                None => pcm,
+            };
+
             state
-                .full(params, pcm)
+                .full(params, entree)
                 .map_err(|e| CoreError::Transcription(format!("decode: {e}")))?;
 
             let mut segments = Vec::new();
@@ -346,8 +430,7 @@ mod decoder {
                 let text = seg.to_str_lossy().unwrap_or_default().to_string();
                 let no_speech = seg.no_speech_probability();
                 let avg_logprob = mean_logprob(&seg);
-                let dropped = no_speech > opts.guard.no_speech_max
-                    && avg_logprob < opts.guard.logprob_min;
+                let dropped = opts.guard.drop_sound_events && is_sound_event(&text);
                 if dropped {
                     needs_review = true;
                 } else if !text.trim().is_empty() {
@@ -369,8 +452,34 @@ mod decoder {
             let language = whisper_rs::get_lang_str(state.full_lang_id_from_state())
                 .map(|s| s.to_string());
 
-            Ok(Transcript { text: kept_text, segments, needs_review, language })
+            Ok(Transcript {
+                text: kept_text,
+                segments,
+                needs_review,
+                language,
+                speech_detected: true,
+            })
         }
+    }
+
+    /// Ne garde que les passages parlés, recollés. Rendre un vecteur vide veut
+    /// dire « personne n'a parlé », ce qui est une réponse et pas un échec.
+    fn speech_only(model_path: &str, pcm: &[f32]) -> Result<Vec<f32>, CoreError> {
+        let mut vad = WhisperVadContext::new(model_path, WhisperVadContextParams::new())
+            .map_err(|e| CoreError::ModelLoad(format!("vad {model_path}: {e}")))?;
+        let segments = vad
+            .segments_from_samples(WhisperVadParams::new(), pcm)
+            .map_err(|e| CoreError::Transcription(format!("vad: {e}")))?;
+        let mut out = Vec::new();
+        for segment in segments {
+            // Les bornes du VAD sont en centisecondes.
+            let debut = (segment.start * 0.01 * SAMPLE_RATE_HZ as f32).max(0.0) as usize;
+            let fin = ((segment.end * 0.01 * SAMPLE_RATE_HZ as f32) as usize).min(pcm.len());
+            if debut < fin {
+                out.extend_from_slice(&pcm[debut..fin]);
+            }
+        }
+        Ok(out)
     }
 
     /// Moyenne des log-probabilités des tokens du segment. whisper.cpp ne rend
@@ -392,6 +501,30 @@ mod decoder {
             0.0
         } else {
             sum / counted
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::is_sound_event;
+
+        #[test]
+        fn une_annotation_de_bruit_n_est_pas_une_capture() {
+            for bruit in ["*soupir*", "[Musique]", "(rires)", "♪♪", "...", " *bruit de porte* "] {
+                assert!(is_sound_event(bruit), "{bruit} devrait être écarté");
+            }
+        }
+
+        #[test]
+        fn une_phrase_reste_une_phrase() {
+            for parole in [
+                "Notez que Romain part en vacances.",
+                "Appeler Théo (le voisin) demain.",
+                "L'écran arrive jeudi",
+                "",
+            ] {
+                assert!(!is_sound_event(parole), "{parole} ne devrait pas être écarté");
+            }
         }
     }
 }
@@ -432,6 +565,30 @@ mod tests {
         add(&conn, "e2", "person", "Théo Marchand", 0.2);
         let names = graph_names(&conn, &PrimeOptions::default()).unwrap();
         assert_eq!(names, vec!["Théo Marchand".to_string(), "sérendipité".to_string()]);
+    }
+
+    /// Le vocabulaire des types grandit avec l'usage : une marque ou un
+    /// restaurant n'était pas prévu par la liste, et ce sont pourtant des noms
+    /// que le décodeur invente. La capitale les rattrape.
+    #[test]
+    fn une_capitale_vaut_un_type_porteur_de_nom_propre() {
+        let conn = db();
+        add(&conn, "e1", "tool", "obsidian vault", 1.0);
+        add(&conn, "e2", "brand", "Nuphy", 0.3);
+        add(&conn, "e3", "restaurant", "Kodawari Ramen", 0.2);
+        let names = graph_names(&conn, &PrimeOptions::default()).unwrap();
+        assert_eq!(names, vec!["Nuphy", "Kodawari Ramen", "obsidian vault"]);
+    }
+
+    /// Et le type rattrape ce que la capitale rate : une marque écrite en bas
+    /// de casse reste un nom propre.
+    #[test]
+    fn un_nom_propre_en_bas_de_casse_reste_devant_par_son_type() {
+        let conn = db();
+        add(&conn, "e1", "tool", "gestionnaire de mots de passe", 1.0);
+        add(&conn, "e2", "organization", "oaio", 0.2);
+        let names = graph_names(&conn, &PrimeOptions::default()).unwrap();
+        assert_eq!(names, vec!["oaio", "gestionnaire de mots de passe"]);
     }
 
     #[test]

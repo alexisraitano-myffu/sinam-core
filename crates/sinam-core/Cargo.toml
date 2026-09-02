@@ -67,3 +67,7 @@ libc = "0.2"
 [[example]]
 name = "voice_bench"
 required-features = ["voice"]
+
+[[example]]
+name = "transcribe_cli"
+required-features = ["voice"]

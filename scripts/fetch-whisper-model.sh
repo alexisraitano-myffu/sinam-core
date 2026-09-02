@@ -6,12 +6,18 @@
 #
 #   ./scripts/fetch-whisper-model.sh                     # large-v3-turbo-q5_0
 #   ./scripts/fetch-whisper-model.sh small               # un autre modèle
+#   ./scripts/fetch-whisper-model.sh silero-v5.1.2       # le détecteur de parole
 #   MODEL_DIR=/ailleurs ./scripts/fetch-whisper-model.sh
 set -euo pipefail
 
 model="${1:-large-v3-turbo-q5_0}"
 dir="${MODEL_DIR:-$HOME/.synapse/models/whisper}"
-url="https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-${model}.bin"
+# Le détecteur de parole (VAD) vit dans un autre dépôt que les modèles de
+# transcription, et c'est un fichier d'un autre ordre de grandeur (1 Mo).
+case "$model" in
+  silero*) url="https://huggingface.co/ggml-org/whisper-vad/resolve/main/ggml-${model}.bin" ;;
+  *)       url="https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-${model}.bin" ;;
+esac
 out="${dir}/ggml-${model}.bin"
 
 mkdir -p "$dir"

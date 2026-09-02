@@ -25,18 +25,26 @@ Trois choses ne peuvent pas être simulées, d'où un enregistrement réel :
 
 Les textes sont **écrits d'avance** dans un fichier de captures, et lus les uns
 après les autres dans un seul enregistrement. Le découpage est fait après coup
-par `scripts/split-voice-take.py`, qui coupe aux silences et pose la référence
-à côté de chaque morceau. Personne ne retranscrit à la main, et la référence ne
-peut pas dériver de ce qui a été dit puisqu'elle a été écrite avant.
+par `scripts/split-voice-take.py`, qui pose la référence à côté de chaque
+morceau. Personne ne retranscrit à la main, et la référence ne peut pas dériver
+de ce qui a été dit puisqu'elle a été écrite avant.
 
 Ce que ça demande à la lecture :
 
-* **environ deux secondes de silence entre deux captures**, franches. C'est le
-  seul repère du découpage ;
+* **un silence franc entre deux captures**, une à deux secondes ;
 * lire **naturellement**, comme on dicterait, pas comme on récite ;
 * en cas de bafouillage, **s'arrêter, faire un vrai silence, reprendre la
-  capture entière**. Le découpage rendra un morceau de trop, ça se rattrape ;
+  capture entière**. L'alignement absorbe la reprise ;
 * ne pas annoncer les numéros à voix haute.
+
+**Le découpage se fait par le contenu, pas par le rythme.** Compter les silences
+paraît suffisant et ne l'est pas : une respiration au milieu d'une phrase dure
+autant qu'une pause entre deux captures. Mesuré sur la première prise réelle, le
+compte tombait juste (30 morceaux pour 30 captures) **en étant faux** : une
+capture coupée en deux compensait deux captures collées. D'où l'ordre des
+opérations : transcrire la prise entière une fois, aligner les mots entendus sur
+les mots écrits, couper aux changements de capture, et seulement là recaler sur
+le silence le plus proche.
 
 **Deux prises valent mieux qu'une** : la même liste lue au calme, puis lue
 dehors en marchant. C'est la condition réelle de la capture vocale, et comparer
@@ -84,16 +92,22 @@ rejoignent à la résolution d'entité.
 ## Les trois commandes
 
 ```bash
-# 1. découper la prise (n'importe quel format, afconvert fait le reste)
-./scripts/split-voice-take.py --audio ~/Downloads/prise.m4a \
-    --captures ~/.synapse/corpus-voix/captures.tsv \
-    --out ~/.synapse/corpus-voix
-
-# 2. les modèles, une fois
+# 1. les modèles, une fois
 ./scripts/fetch-whisper-model.sh base-q5_1
 ./scripts/fetch-whisper-model.sh small-q5_1
 
-# 3. mesurer, plusieurs modèles d'un coup
+# 2. transcrire la prise entière (elle sert à l'alignement, pas à la mesure)
+afconvert -f WAVE -d LEI16@16000 -c 1 ~/Downloads/prise.m4a /tmp/prise.wav
+cargo run --release --features voice-metal --example transcribe_cli -- \
+    --model ~/.synapse/models/whisper/ggml-large-v3-turbo-q5_0.bin \
+    --audio /tmp/prise.wav --lang fr > /tmp/segments.tsv
+
+# 3. découper : alignement du contenu, recalage sur les silences
+./scripts/split-voice-take.py --audio /tmp/prise.wav --segments /tmp/segments.tsv \
+    --captures ~/.synapse/corpus-voix/captures.tsv \
+    --out ~/.synapse/corpus-voix
+
+# 4. mesurer, plusieurs modèles d'un coup
 cargo run --release --features voice --example voice_bench -- \
     --model ~/.synapse/models/whisper/ggml-base-q5_1.bin \
     --model ~/.synapse/models/whisper/ggml-small-q5_1.bin \
@@ -112,9 +126,21 @@ sert à mesurer le desktop, pas à décider du modèle embarqué.
 
 ## Lire le résultat
 
-Le seul chiffre qui décide est la ligne `écart`, en noms retrouvés grâce à
+Le chiffre qui décide est la ligne `écart`, en noms retrouvés grâce à
 l'amorçage. Trente captures portent 40 à 50 noms vérifiés : **un écart de ±1 ou
 2 ne veut rien dire**, c'est le bruit. Un amorçage qui sert se voit franchement.
+
+Ce total se lit en deux populations, et c'est la lecture qui apprend quelque
+chose. Le budget de 180 tokens n'entre pas tous les noms du graphe : sur une
+base de 70 entités, une quarantaine de noms passent. Le banc sépare donc les
+**noms présents dans le prompt** des **autres**.
+
+* la première ligne mesure ce que l'amorçage achète là où il agit ;
+* la seconde est le garde-fou : elle doit rester **stable**. Un amorçage qui la
+  dégrade écrit des noms connus à la place d'inconnus, ce qui est l'erreur qu'il
+  était censé empêcher, retournée.
+
+Mélanger les deux noierait le gain dans les noms que le prompt ne portait pas.
 
 Trois lectures possibles, et les trois sont des réponses :
 
