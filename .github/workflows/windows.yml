@@ -54,6 +54,24 @@ jobs:
           SYNAPSE_MODEL_DIR: ${{ github.workspace }}/model
         run: cargo test --release
 
+      # Le desktop charge le coeur par JNA, pas par le backend : il lui faut
+      # une DLL, pas seulement la wheel. Meme binding genere que sur Android,
+      # donc `voice` est obligatoire — sans elle la DLL n'a pas de Transcriber
+      # et c'est l'app qui casse, beaucoup plus tard.
+      - name: Build FFI cdylib (voice)
+        run: cargo build -p sinam-core-ffi --release --features voice
+
+      - name: Check the DLL carries the decoder
+        shell: bash
+        run: |
+          set -euo pipefail
+          ls -la target/release/sinam_core_ffi.dll
+          # Les symboles UniFFI du transcripteur, sinon la DLL est muette la
+          # ou l'app l'appelle.
+          strings -a target/release/sinam_core_ffi.dll \
+            | grep -q "uniffi_sinam_core_ffi_fn_constructor_transcriber_new" \
+            || { echo "DLL sans Transcriber" >&2; exit 1; }
+
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
@@ -84,8 +102,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          NOTES="Wheel Windows sinam_core — build $(git rev-parse --short HEAD)"
+          NOTES="Windows — wheel sinam_core + sinam_core_ffi.dll (transcription whisper.cpp incluse), build $(git rev-parse --short HEAD)"
           gh release create core-windows --title "SinamCore Windows (rolling)" \
             --notes "$NOTES" --latest=false 2>/dev/null || \
             gh release edit core-windows --notes "$NOTES"
-          gh release upload core-windows --clobber target/wheels/*.whl
+          gh release upload core-windows --clobber \
+            target/wheels/*.whl \
+            target/release/sinam_core_ffi.dll
