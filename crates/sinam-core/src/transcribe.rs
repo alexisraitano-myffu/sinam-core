@@ -459,12 +459,17 @@ mod decoder {
 
             let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
             params.set_n_threads(self.threads);
-            // Pas de repli en température : quand un segment déplaît à
-            // whisper.cpp (entropie ou logprob sous les seuils), il le redécode
-            // jusqu'à cinq fois de suite. Sur un téléphone c'est le pire des
-            // deux mondes, on paie plusieurs passes pour un texte à peine
-            // différent, et la latence devient imprévisible.
-            params.set_temperature_inc(0.0);
+            // ⚠️ **Le repli en température doit rester actif.** Il a été coupé
+            // une fois pour borner la latence, au motif qu'il ne se déclenchait
+            // pas sur le corpus de mesure. C'est vrai, et c'est justement le
+            // problème : il ne sert que sur les cas que le corpus ne contient
+            // pas. Sans lui, un segment qui part en boucle de répétition
+            // (« oaia oaia oaia ») est rendu tel quel, parce que le redécodage
+            // à température plus haute est le SEUL mécanisme qui en sort.
+            // Observé en usage réel, jamais au banc. Le coût ne se paie que
+            // sur les segments qui échouent aux seuils d'entropie, donc jamais
+            // sur une capture saine.
+            params.set_temperature_inc(0.2);
             params.set_translate(false);
             params.set_print_special(false);
             params.set_print_progress(false);
