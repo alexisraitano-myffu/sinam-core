@@ -21,11 +21,13 @@ FEATURES="${FEATURES:-ort-dynamic,voice}"
 # 1. cmake lui-même. Les Command Line Tools n'en fournissent pas ; celui du SDK
 #    Android fait l'affaire, avec son ninja (sinon : « CMAKE_MAKE_PROGRAM is not
 #    set »).
-# 2. l'emplacement du NDK. Sans lui : « Neither the NDK or a standalone
-#    toolchain was found ». On laisse cmake faire son propre support Android
-#    plutôt que de passer le fichier de chaîne du NDK : ce dernier ignore
-#    ANDROID_ABI passé par l'environnement, retombe sur armeabi-v7a et casse sur
-#    « unsupported argument 'armv7-a' » alors que la cible est arm64.
+# 2. une chaîne d'outils. `scripts/android-toolchain.cmake` pose l'ABI AVANT
+#    d'inclure celle du NDK (qui lit ANDROID_ABI comme variable cmake, jamais
+#    comme variable d'environnement : sans ça elle retombe sur armeabi-v7a et
+#    casse sur « unsupported argument 'armv7-a' » alors que la cible est arm64)
+#    et y ajoute les instructions ARM que le processeur a. Sans elles, les
+#    noyaux quantifiés de ggml prennent le chemin lent : mesuré sur un Pixel 9a,
+#    la transcription passe de 2,4× à 0,9× le temps réel rien qu'avec ça.
 # 3. une archive `ggml-blas` vide. whisper-rs-sys teste `cfg!(target_os =
 #    "macos")` DANS son build script, donc sur l'HÔTE : en croisant depuis un
 #    Mac il réclame une bibliothèque que la compilation Android ne produit pas.
@@ -40,6 +42,7 @@ if [[ "$FEATURES" == *voice* ]]; then
     export CMAKE_MAKE_PROGRAM="$SDK_CMAKE/bin/ninja"
     export ANDROID_NDK_ROOT="$NDK_DIR"
     export ANDROID_NDK="$NDK_DIR"
+    export CMAKE_TOOLCHAIN_FILE="$PWD/scripts/android-toolchain.cmake"
 
     SHIM_DIR="$PWD/target/android-shims"
     mkdir -p "$SHIM_DIR"

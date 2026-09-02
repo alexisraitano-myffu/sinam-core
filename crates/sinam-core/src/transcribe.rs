@@ -167,7 +167,7 @@ pub fn rank_names(mut candidates: Vec<NameCandidate>, include_aliases: bool) -> 
 
     let mut out: Vec<String> = Vec::new();
     let mut seen: Vec<String> = Vec::new();
-    let mut push = |name: &str, out: &mut Vec<String>, seen: &mut Vec<String>| {
+    let push = |name: &str, out: &mut Vec<String>, seen: &mut Vec<String>| {
         let name = name.trim();
         if name.is_empty() || name.chars().count() > MAX_NAME_CHARS {
             return;
@@ -449,14 +449,24 @@ mod decoder {
 
             let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
             params.set_n_threads(self.threads);
+            // Pas de repli en température : quand un segment déplaît à
+            // whisper.cpp (entropie ou logprob sous les seuils), il le redécode
+            // jusqu'à cinq fois de suite. Sur un téléphone c'est le pire des
+            // deux mondes, on paie plusieurs passes pour un texte à peine
+            // différent, et la latence devient imprévisible.
+            params.set_temperature_inc(0.0);
             params.set_translate(false);
             params.set_print_special(false);
             params.set_print_progress(false);
             params.set_print_realtime(false);
             params.set_print_timestamps(false);
-            if let Some(lang) = opts.language.as_deref() {
-                params.set_language(Some(lang));
-            }
+            // ⚠️ Ne JAMAIS laisser ce champ au défaut de whisper.cpp : il vaut
+            // `"en"`, pas « détecte ». Une capture française décodée sous le
+            // jeton anglais n'est pas mal transcrite, elle est TRADUITE
+            // (« Acheter des piles, du café » ressortait en « Buy batteries,
+            // coffee »), et rien dans la sortie ne signale que ça s'est
+            // produit. `"auto"` déclenche la détection sur l'audio.
+            params.set_language(Some(opts.language.as_deref().unwrap_or("auto")));
             if let Some(prompt) = opts.initial_prompt.as_deref() {
                 // set_initial_prompt panique sur un octet nul, et un nom
                 // d'entité vient d'une base que l'utilisateur remplit.
@@ -485,6 +495,16 @@ mod decoder {
                 }
                 None => pcm,
             };
+
+            // whisper encode TOUJOURS une fenêtre de 30 s : une capture de 6 s
+            // est complétée par du vide, et l'encodeur paie le vide plein pot.
+            // Réduire le contexte audio à la durée réelle est le plus gros
+            // levier de vitesse sur un téléphone, et il est gratuit en qualité
+            // tant qu'on garde une marge (mesuré : rien ne bouge dans le texte).
+            // 1500 trames = 30 s.
+            let seconds = entree.len() as f32 / SAMPLE_RATE_HZ as f32;
+            let ctx = ((seconds / 30.0 * 1500.0).ceil() as i32 + 128).clamp(256, 1500);
+            params.set_audio_ctx(ctx);
 
             state
                 .full(params, entree)
