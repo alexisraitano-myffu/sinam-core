@@ -13,7 +13,9 @@ cargo run --example embed_cli -- <model_dir> [texte]   # smoke/parité on-device
 cd crates/sinam-core-py && maturin build --release
 
 # Android (l'app embarque libonnxruntime.so, ort le charge dynamiquement)
-cargo ndk -t arm64-v8a build -p sinam-core-ffi --no-default-features --features ort-dynamic --release
+# Passer par le script : la voix demande cmake, le NDK et une archive vide.
+./scripts/build-android.sh                         # ort-dynamic + voice
+FEATURES=ort-dynamic ./scripts/build-android.sh    # sans le décodeur
 
 # Binding Kotlin (UniFFI proc-macro : se génère depuis la lib compilée)
 cargo build -p sinam-core-ffi
@@ -58,6 +60,9 @@ Workspace à 3 crates, avec une règle dure : **toute la logique vit dans `crate
 ### Pièges verrouillés (ne pas re-payer)
 
 - **Matrice de versions** : fastembed 5.17 → ort `=2.0.0-rc.12` (api-24) → onnxruntime ≥ 1.24 (AAR Android `1.27.0`). Un onnxruntime trop vieux ne donne pas d'erreur : ort rc.12 **deadlocke** (OnceLock réentrant dans son chemin d'erreur). Ne bumper fastembed/ort qu'ensemble, en revérifiant la matrice.
+- **Croiser whisper.cpp vers Android demande trois choses, et aucune ne se signale clairement** (toutes tenues par `scripts/build-android.sh`) : le cmake du SDK Android avec son ninja (les Command Line Tools n'en fournissent pas) ; l'emplacement du NDK via `ANDROID_NDK_ROOT`, **sans** passer le fichier de chaîne du NDK (il ignore `ANDROID_ABI` venu de l'environnement, retombe sur armeabi-v7a et casse sur « unsupported argument 'armv7-a' » alors que la cible est arm64) ; et une archive `libggml-blas.a` **vide**, parce que whisper-rs-sys teste `cfg!(target_os = "macos")` DANS son build script, donc sur l'HÔTE, et réclame en croisant une bibliothèque que la compilation Android ne produit pas. Au passage : `RUSTFLAGS` se découpe sur les espaces et le chemin du dépôt en contient un, d'où `CARGO_ENCODED_RUSTFLAGS`.
+- **Le binding Kotlin doit être généré avec les MÊMES features** que la lib Android depuis que le décodeur existe : sorti d'un build hôte sans `voice`, il n'a pas de `Transcriber` et l'app ne compile pas.
+- **L'audio traverse la FFI en OCTETS**, jamais en `Vec<i16>` : UniFFI rend un tableau de shorts sous forme de liste d'objets, soit 320 000 allocations pour vingt secondes de parole, là où un tableau d'octets passe tel quel. C'est aussi ce que rend `AudioRecord.read(byte[])`.
 - **Le VAD de whisper.cpp ne s'applique QUE dans `whisper_full()`**, jamais dans `whisper_full_with_state()`, par lequel passe toute liaison qui gère son propre état (donc whisper-rs, donc nous). Poser `vad_model_path` + `enable_vad(true)` ne produit alors **aucun effet et aucune erreur**, pas même avec un chemin de modèle inexistant : le filtrage est refait à la main dans `transcribe::speech_only`. Ne pas « simplifier » en rendant la main au drapeau.
 - **`ORT_DYLIB_PATH` ne doit jamais pointer vers un chemin inexistant** (même deadlock). Sur Android (`extractNativeLibs=false`), les .so ne sont pas extraits sur disque : précharger via `System.loadLibrary("onnxruntime")` et laisser ort dlopen par soname.
 - Troncature embeddings : le modèle qdrant tronque à **128 tokens** (min de `max_length`/`model_max_length` dans `tokenizer_config.json`, comme fastembed Python) — et 128 est le BON granule pour ce modèle de phrases : embedder un texte long en un seul vecteur 512 **dilue** (mesuré : les requêtes tête ET queue chutent). Les textes longs sont **chunkés** : `Embedder::embed_chunks` = un vecteur par fenêtre de ~128 tokens (overlap 24, max 16 fenêtres) ; notes = une ligne vec0 par chunk (clé `uuid` puis `uuid#k`, `search_notes` déduplique au meilleur chunk) ; ressources = frames concaténées dans le BLOB (`score_against_frames` = max). vec0 ne supporte pas INSERT OR REPLACE : l'upsert balaie puis insère.

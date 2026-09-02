@@ -16,6 +16,8 @@ pub enum CoreError {
     LlmHttp { msg: String },
     #[error("llm content error: {msg}")]
     LlmContent { msg: String },
+    #[error("transcription failed: {msg}")]
+    Transcription { msg: String },
 }
 
 impl From<sinam_core::CoreError> for CoreError {
@@ -26,6 +28,7 @@ impl From<sinam_core::CoreError> for CoreError {
             sinam_core::CoreError::Storage(msg) => CoreError::Storage { msg },
             sinam_core::CoreError::LlmHttp(msg) => CoreError::LlmHttp { msg },
             sinam_core::CoreError::LlmContent(msg) => CoreError::LlmContent { msg },
+            sinam_core::CoreError::Transcription(msg) => CoreError::Transcription { msg },
         }
     }
 }
@@ -40,6 +43,7 @@ impl From<CoreError> for sinam_core::CoreError {
             CoreError::Storage { msg } => sinam_core::CoreError::Storage(msg),
             CoreError::LlmHttp { msg } => sinam_core::CoreError::LlmHttp(msg),
             CoreError::LlmContent { msg } => sinam_core::CoreError::LlmContent(msg),
+            CoreError::Transcription { msg } => sinam_core::CoreError::Transcription(msg),
         }
     }
 }
@@ -373,6 +377,31 @@ impl SqlConnection {
     /// local core db.
     pub fn read_snapshot(&self) -> Result<String, CoreError> {
         Ok(self.inner.read_snapshot()?.to_string())
+    }
+
+    /// Les noms du graphe qui amorcent la transcription vocale, classés comme
+    /// dans le core (voir `transcribe.rs`). L'app les passe au décodeur juste
+    /// avant de transcrire : c'est ce qui empêche un prénom mal entendu de
+    /// devenir une entité en double.
+    pub fn voice_names(
+        &self,
+        max_names: u32,
+        include_aliases: bool,
+    ) -> Result<Vec<String>, CoreError> {
+        Ok(self.inner.voice_names(max_names, include_aliases)?)
+    }
+
+    /// Le même amorçage déjà rendu en texte et coupé au budget de tokens, pour
+    /// un hôte qui n'a pas de décodeur chargé sous la main.
+    pub fn voice_prompt(
+        &self,
+        budget_tokens: u32,
+        max_names: u32,
+        include_aliases: bool,
+    ) -> Result<String, CoreError> {
+        Ok(self
+            .inner
+            .voice_prompt(budget_tokens, max_names, include_aliases)?)
     }
 
     /// Reverse provenance of one capture (`/capture/{id}/generated`).
@@ -754,5 +783,115 @@ impl Brain {
             .inner
             .classify(&content, day_context.as_deref(), &config)?
             .to_string())
+    }
+}
+
+// ── Transcription vocale ────────────────────────────────────────────────────
+
+/// Un morceau de transcription, avec de quoi juger ce qu'il vaut.
+#[cfg(feature = "voice")]
+#[derive(uniffi::Record)]
+pub struct VoiceSegment {
+    pub text: String,
+    pub start_ms: i64,
+    pub end_ms: i64,
+    /// Diagnostic seulement : mesuré à 0 sur tous les modèles publiés.
+    pub no_speech_prob: f32,
+    /// Diagnostic seulement : ne sépare pas le souffle de la parole.
+    pub avg_logprob: f32,
+    /// Écarté parce que ce n'est pas de la parole (annotation de bruit).
+    pub dropped: bool,
+}
+
+#[cfg(feature = "voice")]
+#[derive(uniffi::Record)]
+pub struct VoiceTranscript {
+    /// Le texte de la capture, segments écartés exclus.
+    pub text: String,
+    pub segments: Vec<VoiceSegment>,
+    /// Un segment a été écarté : l'app envoie la capture en « À valider »
+    /// plutôt que de l'écrire telle quelle.
+    pub needs_review: bool,
+    pub language: Option<String>,
+    /// Faux quand le détecteur de parole n'a rien trouvé. L'app n'écrit alors
+    /// AUCUNE capture : une capture vide vaut mieux qu'une capture inventée.
+    pub speech_detected: bool,
+}
+
+#[cfg(feature = "voice")]
+#[derive(uniffi::Record, Default)]
+pub struct VoiceOptions {
+    /// Code ISO 639-1 ; vide = détection par le modèle.
+    pub language: Option<String>,
+    /// Amorçage, typiquement rendu par `SqlConnection::voice_prompt` ou par
+    /// `Transcriber::fit_prompt` à partir de `voice_names`.
+    pub initial_prompt: Option<String>,
+    /// Chemin du modèle de détection de parole (silero, environ 1 Mo).
+    pub vad_model_path: Option<String>,
+}
+
+/// Décodeur whisper.cpp. Le fichier modèle est une DONNÉE passée en chemin,
+/// livrée comme celle de l'embedder.
+#[cfg(feature = "voice")]
+#[derive(uniffi::Object)]
+pub struct Transcriber {
+    inner: sinam_core::Transcriber,
+}
+
+#[cfg(feature = "voice")]
+#[uniffi::export]
+impl Transcriber {
+    /// `threads` : rester bas sur mobile, le décodeur partage le processeur
+    /// avec le reste de l'application.
+    #[uniffi::constructor]
+    pub fn new(model_path: String, threads: i32) -> Result<Arc<Self>, CoreError> {
+        let inner = sinam_core::Transcriber::new(&model_path)?.with_threads(threads);
+        Ok(Arc::new(Self { inner }))
+    }
+
+    /// Coupe une liste de noms au budget, au token près (tokenizer du modèle
+    /// chargé). Les noms les plus forts survivent.
+    pub fn fit_prompt(&self, names: Vec<String>, budget_tokens: u32) -> String {
+        self.inner.fit_prompt(&names, budget_tokens as usize)
+    }
+
+    /// `pcm16_le` : les OCTETS du tampon audio, mono 16 bits signé
+    /// petit-boutiste à 16 kHz, tels que les rend `AudioRecord.read(byte[])`
+    /// (Android) ou `AVAudioRecorder` (iOS). Des octets et pas des entiers 16
+    /// bits : un tableau d'octets traverse la frontière tel quel, là où un
+    /// tableau de shorts devient une liste d'objets, soit 320 000 allocations
+    /// pour vingt secondes de parole. La conversion vit dans le core pour
+    /// qu'aucun hôte ne la refasse à sa façon.
+    pub fn transcribe_pcm16(
+        &self,
+        pcm16_le: Vec<u8>,
+        options: VoiceOptions,
+    ) -> Result<VoiceTranscript, CoreError> {
+        let samples = sinam_core::pcm16le_to_f32(&pcm16_le);
+        let opts = sinam_core::TranscribeOptions {
+            language: options.language,
+            initial_prompt: options.initial_prompt,
+            vad_model_path: options.vad_model_path,
+            ..Default::default()
+        };
+        let out = self.inner.transcribe(&samples, &opts)?;
+        Ok(VoiceTranscript {
+            text: out.text,
+            segments: out
+                .segments
+                .into_iter()
+                .map(|s| VoiceSegment {
+                    text: s.text,
+                    start_ms: s.start_ms,
+                    end_ms: s.end_ms,
+                    no_speech_prob: s.no_speech_prob,
+                    avg_logprob: s.avg_logprob,
+                    dropped: s.dropped,
+                })
+                .collect(),
+            needs_review: out.needs_review,
+            language: out.language,
+            speech_detected: out.speech_detected,
+        })
     }
 }

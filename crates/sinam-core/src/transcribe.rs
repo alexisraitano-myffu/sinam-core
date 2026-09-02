@@ -198,6 +198,20 @@ pub fn pcm16_to_f32(samples: &[i16]) -> Vec<f32> {
     samples.iter().map(|s| *s as f32 / 32768.0).collect()
 }
 
+/// La même chose depuis les OCTETS bruts, petit-boutiste, tels que
+/// `AudioRecord.read(byte[])` les rend.
+///
+/// C'est la forme qui passe la frontière FFI : un tableau d'octets y voyage
+/// tel quel, alors qu'un tableau d'entiers 16 bits devient une liste
+/// d'objets, soit 320 000 allocations pour vingt secondes de parole. Un octet
+/// isolé en fin de tampon est ignoré : c'est une trame coupée, pas une erreur.
+pub fn pcm16le_to_f32(bytes: &[u8]) -> Vec<f32> {
+    bytes
+        .chunks_exact(2)
+        .map(|p| i16::from_le_bytes([p[0], p[1]]) as f32 / 32768.0)
+        .collect()
+}
+
 // ── Décodeur ────────────────────────────────────────────────────────────────
 
 #[cfg(feature = "voice")]
@@ -673,6 +687,17 @@ mod tests {
         add(&conn, "e1", "person", "Marie", 1.0);
         add(&conn, "e2", "place", "Lyon", 0.5);
         assert_eq!(graph_prompt(&conn, &PrimeOptions::default()).unwrap(), "Marie, Lyon.");
+    }
+
+    #[test]
+    fn les_octets_bruts_donnent_les_memes_echantillons() {
+        let samples: [i16; 4] = [0, 1234, -1234, i16::MIN];
+        let bytes: Vec<u8> = samples.iter().flat_map(|s| s.to_le_bytes()).collect();
+        assert_eq!(pcm16le_to_f32(&bytes), pcm16_to_f32(&samples));
+        // Une trame coupée en deux ne fait pas échouer la capture.
+        let mut tronque = bytes.clone();
+        tronque.push(7);
+        assert_eq!(pcm16le_to_f32(&tronque).len(), samples.len());
     }
 
     #[test]
