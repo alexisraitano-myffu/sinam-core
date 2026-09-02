@@ -2,11 +2,18 @@
 //!
 //! ```text
 //! cargo run --release --features voice --example voice_bench -- \
-//!     --model ~/.synapse/models/whisper/ggml-large-v3-turbo-q5_0.bin \
+//!     --model ~/.synapse/models/whisper/ggml-small-q5_1.bin \
+//!     --model ~/.synapse/models/whisper/ggml-base-q5_1.bin \
 //!     --corpus ~/.synapse/corpus-voix \
 //!     --db ~/.synapse/synapse.db \
 //!     --lang fr
 //! ```
+//!
+//! `--model` se répète : chaque modèle passe le corpus entier, nu puis amorcé,
+//! et le tableau final les met côte à côte. C'est comme ça qu'on choisit celui
+//! qui ira sur le téléphone, où il n'y aura ni Metal ni gros modèle : lancer
+//! avec la feature `voice` nue (processeur seul) donne le facteur temps réel
+//! le plus proche de ce que fera l'appareil.
 //!
 //! Le corpus est un dossier de paires : `01-courses.wav` (16 kHz mono) et
 //! `01-courses.txt` (ce qui a réellement été dit). Un `01-courses.noms`
@@ -31,41 +38,48 @@ use std::time::Instant;
 use sinam_core::{PrimeOptions, TranscribeOptions, Transcriber, PRIME_TOKEN_BUDGET};
 
 struct Args {
-    model: String,
+    models: Vec<String>,
     corpus: PathBuf,
     db: Option<String>,
     lang: Option<String>,
     threads: i32,
     json: Option<PathBuf>,
+    brief: bool,
 }
 
 fn parse_args() -> Args {
-    let mut model = None;
+    let mut models = Vec::new();
     let mut corpus = None;
     let mut db = None;
     let mut lang = None;
     let mut threads = 4;
     let mut json = None;
+    let mut brief = false;
     let mut it = std::env::args().skip(1);
     while let Some(flag) = it.next() {
         let mut value = || it.next().unwrap_or_else(|| fail(&format!("{flag} attend une valeur")));
         match flag.as_str() {
-            "--model" => model = Some(value()),
+            "--model" => models.push(value()),
             "--corpus" => corpus = Some(PathBuf::from(value())),
             "--db" => db = Some(value()),
             "--lang" => lang = Some(value()),
             "--threads" => threads = value().parse().unwrap_or(4),
             "--json" => json = Some(PathBuf::from(value())),
+            "--brief" => brief = true,
             other => fail(&format!("option inconnue : {other}")),
         }
     }
+    if models.is_empty() {
+        fail("--model <fichier ggml> est obligatoire (répétable)");
+    }
     Args {
-        model: model.unwrap_or_else(|| fail("--model <fichier ggml> est obligatoire")),
+        models,
         corpus: corpus.unwrap_or_else(|| fail("--corpus <dossier> est obligatoire")),
         db,
         lang,
         threads,
         json,
+        brief,
     }
 }
 
@@ -92,6 +106,22 @@ struct Run {
     seconds: f64,
 }
 
+/// Le bilan d'un modèle sur tout le corpus, tel qu'il entre dans le tableau
+/// comparatif final.
+struct Summary {
+    label: String,
+    names_total: usize,
+    hits_nu: usize,
+    hits_amorce: Option<usize>,
+    wer_nu: f64,
+    wer_amorce: Option<f64>,
+    dropped_nu: usize,
+    dropped_amorce: usize,
+    secs_nu: f64,
+    secs_amorce: f64,
+    audio: f64,
+}
+
 fn main() {
     let args = parse_args();
 
@@ -111,41 +141,96 @@ fn main() {
     if cases.is_empty() {
         fail("aucune paire .wav/.txt dans le corpus");
     }
+    // L'audio est lu une fois : il sert à tous les modèles, et sa durée totale
+    // est ce qui rend les temps comparables entre eux.
+    let audio: Vec<Vec<f32>> = cases.iter().map(|c| read_wav(&c.wav)).collect();
+    let audio_seconds: f64 = audio
+        .iter()
+        .map(|pcm| pcm.len() as f64 / sinam_core::SAMPLE_RATE_HZ as f64)
+        .sum();
 
-    let decoder = Transcriber::new(&args.model)
-        .unwrap_or_else(|e| fail(&format!("modèle : {e}")))
-        .with_threads(args.threads);
-
-    let prompt = decoder.fit_prompt(&graph_names, PRIME_TOKEN_BUDGET);
-    println!("modèle    : {}", args.model);
-    println!("corpus    : {} cas", cases.len());
+    println!("corpus    : {} cas, {audio_seconds:.0} s d'audio", cases.len());
     if graph_names.is_empty() {
-        println!("amorçage  : AUCUN (pas de --db, la comparaison n'aura qu'une colonne)");
+        println!("amorçage  : AUCUN (pas de --db, la comparaison n'aura qu'une ligne par modèle)");
     } else {
-        println!(
-            "amorçage  : {} noms lus, {} retenus dans le prompt",
-            graph_names.len(),
-            prompt.split(", ").count()
-        );
-    }
-    println!();
-
-    let mut rows = Vec::new();
-    for case in &cases {
-        let pcm = read_wav(&case.wav);
-        let nu = transcribe(&decoder, &pcm, case, args.lang.as_deref(), None);
-        let amorce = if prompt.is_empty() {
-            None
-        } else {
-            Some(transcribe(&decoder, &pcm, case, args.lang.as_deref(), Some(&prompt)))
-        };
-        print_case(case, &nu, amorce.as_ref());
-        rows.push((case, nu, amorce));
+        println!("amorçage  : {} noms lus dans le graphe", graph_names.len());
     }
 
-    print_totals(&rows);
+    let mut table = Vec::new();
+    let mut json_models = serde_json::Map::new();
+    for model in &args.models {
+        let label = short_label(model);
+        let decoder = Transcriber::new(model)
+            .unwrap_or_else(|e| fail(&format!("modèle {label} : {e}")))
+            .with_threads(args.threads);
+        let prompt = decoder.fit_prompt(&graph_names, PRIME_TOKEN_BUDGET);
+
+        println!("\n════════ {label} ════════");
+        if !prompt.is_empty() {
+            println!("{} noms retenus dans le prompt", prompt.split(", ").count());
+        }
+        println!();
+
+        let mut rows = Vec::new();
+        for (case, pcm) in cases.iter().zip(&audio) {
+            let nu = transcribe(&decoder, pcm, case, args.lang.as_deref(), None);
+            let amorce = if prompt.is_empty() {
+                None
+            } else {
+                Some(transcribe(&decoder, pcm, case, args.lang.as_deref(), Some(&prompt)))
+            };
+            if !args.brief {
+                print_case(case, &nu, amorce.as_ref());
+            }
+            rows.push((case, nu, amorce));
+        }
+
+        let summary = summarize(&label, &rows, audio_seconds);
+        print_totals(&summary);
+        if args.json.is_some() {
+            json_models.insert(label.clone(), models_json(&rows, &prompt));
+        }
+        table.push(summary);
+    }
+
+    print_table(&table);
     if let Some(path) = args.json.as_ref() {
-        write_json(path, &rows, &prompt);
+        write_json(path, json_models);
+    }
+}
+
+/// Le nom du fichier suffit à identifier un modèle dans le tableau ; le chemin
+/// complet ne fait qu'écraser la ligne.
+fn short_label(path: &str) -> String {
+    Path::new(path)
+        .file_stem()
+        .map(|s| s.to_string_lossy().trim_start_matches("ggml-").to_string())
+        .unwrap_or_else(|| path.to_string())
+}
+
+fn summarize(label: &str, rows: &[(&Case, Run, Option<Run>)], audio: f64) -> Summary {
+    let amorce_partout = !rows.is_empty() && rows.iter().all(|(_, _, a)| a.is_some());
+    Summary {
+        label: label.to_string(),
+        names_total: rows.iter().map(|(c, _, _)| c.names.len()).sum(),
+        hits_nu: rows.iter().map(|(_, n, _)| n.hits).sum(),
+        hits_amorce: amorce_partout
+            .then(|| rows.iter().map(|(_, _, a)| a.as_ref().unwrap().hits).sum()),
+        wer_nu: rows.iter().map(|(_, n, _)| n.wer).sum::<f64>() / rows.len() as f64,
+        wer_amorce: amorce_partout.then(|| {
+            rows.iter().map(|(_, _, a)| a.as_ref().unwrap().wer).sum::<f64>() / rows.len() as f64
+        }),
+        dropped_nu: rows.iter().map(|(_, n, _)| n.dropped).sum(),
+        dropped_amorce: rows
+            .iter()
+            .map(|(_, _, a)| a.as_ref().map_or(0, |r| r.dropped))
+            .sum(),
+        secs_nu: rows.iter().map(|(_, n, _)| n.seconds).sum(),
+        secs_amorce: rows
+            .iter()
+            .map(|(_, _, a)| a.as_ref().map_or(0.0, |r| r.seconds))
+            .sum(),
+        audio,
     }
 }
 
@@ -197,12 +282,23 @@ fn load_corpus(dir: &Path, graph_names: &[String]) -> Vec<Case> {
         if wav.extension().and_then(|e| e.to_str()) != Some("wav") {
             continue;
         }
+        // Un `_` en tête marque un fichier de travail (le bruit de fond gardé
+        // par le découpage), pas un cas.
+        if wav.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.starts_with('_')) {
+            continue;
+        }
         let txt = wav.with_extension("txt");
         let Ok(expected) = std::fs::read_to_string(&txt) else {
             eprintln!("  (ignoré : {wav:?} n'a pas de .txt à côté)");
             continue;
         };
         let expected = expected.trim().to_string();
+        // Un .txt encore vide n'est pas une erreur : le corpus se remplit à son
+        // rythme, et un cas sans référence ne peut rien mesurer.
+        if expected.is_empty() {
+            eprintln!("  (en attente : {:?} n'a pas encore sa référence écrite)", txt);
+            continue;
+        }
         let names_file = wav.with_extension("noms");
         let names = match std::fs::read_to_string(&names_file) {
             Ok(raw) => raw
@@ -334,39 +430,71 @@ fn print_run(label: &str, case: &Case, run: &Run) {
     }
 }
 
-fn print_totals(rows: &[(&Case, Run, Option<Run>)]) {
-    let total_names: usize = rows.iter().map(|(c, _, _)| c.names.len()).sum();
-    let hits_nu: usize = rows.iter().map(|(_, n, _)| n.hits).sum();
-    let wer_nu: f64 = rows.iter().map(|(_, n, _)| n.wer).sum::<f64>() / rows.len() as f64;
-    let dropped_nu: usize = rows.iter().map(|(_, n, _)| n.dropped).sum();
-
-    println!("════ total sur {} cas, {total_names} noms ════", rows.len());
-    if total_names == 0 {
+fn print_totals(s: &Summary) {
+    println!("──── {} : {} noms vérifiés ────", s.label, s.names_total);
+    if s.names_total == 0 {
         println!("aucun nom à vérifier : la mesure qui compte est muette, ajoutez des .noms");
     }
     println!(
-        "nu      : erreurs sur les noms {:.1} % · WER moyen {:.1} % · {dropped_nu} rejet(s)",
-        miss_rate(total_names, hits_nu),
-        wer_nu * 100.0
+        "nu      : erreurs sur les noms {:.1} % · WER moyen {:.1} % · {} rejet(s) · {:.2}× le temps réel",
+        miss_rate(s.names_total, s.hits_nu),
+        s.wer_nu * 100.0,
+        s.dropped_nu,
+        s.secs_nu / s.audio
     );
-    if rows.iter().all(|(_, _, a)| a.is_some()) && !rows.is_empty() {
-        let hits: usize = rows.iter().map(|(_, _, a)| a.as_ref().unwrap().hits).sum();
-        let w: f64 = rows.iter().map(|(_, _, a)| a.as_ref().unwrap().wer).sum::<f64>()
-            / rows.len() as f64;
-        let dropped: usize = rows.iter().map(|(_, _, a)| a.as_ref().unwrap().dropped).sum();
+    if let (Some(hits), Some(wer)) = (s.hits_amorce, s.wer_amorce) {
         println!(
-            "amorcé  : erreurs sur les noms {:.1} % · WER moyen {:.1} % · {dropped} rejet(s)",
-            miss_rate(total_names, hits),
-            w * 100.0
-        );
-        let gagnes = hits as i64 - hits_nu as i64;
-        println!(
-            "écart   : {gagnes:+} nom(s) retrouvés grâce à l'amorçage sur {total_names}"
+            "amorcé  : erreurs sur les noms {:.1} % · WER moyen {:.1} % · {} rejet(s) · {:.2}× le temps réel",
+            miss_rate(s.names_total, hits),
+            wer * 100.0,
+            s.dropped_amorce,
+            s.secs_amorce / s.audio
         );
         println!(
-            "          (à comparer au bruit : ±1 nom sur {total_names} ne veut rien dire)"
+            "écart   : {:+} nom(s) retrouvés grâce à l'amorçage sur {}",
+            hits as i64 - s.hits_nu as i64,
+            s.names_total
         );
     }
+}
+
+/// Le tableau qui sert à choisir. Deux lignes par modèle, parce que la question
+/// n'est pas seulement « lequel transcrit le mieux » mais « lequel a besoin de
+/// l'amorçage, et de combien ».
+fn print_table(table: &[Summary]) {
+    if table.is_empty() {
+        return;
+    }
+    let names = table[0].names_total;
+    println!("\n════════ comparatif ({names} noms, {:.0} s d'audio) ════════", table[0].audio);
+    println!(
+        "{:<24} {:>14} {:>10} {:>16}",
+        "modèle", "erreurs noms", "WER", "temps réel"
+    );
+    for s in table {
+        println!(
+            "{:<24} {:>13.1} % {:>9.1} % {:>15.2}×",
+            format!("{}  nu", s.label),
+            miss_rate(s.names_total, s.hits_nu),
+            s.wer_nu * 100.0,
+            s.secs_nu / s.audio
+        );
+        if let (Some(hits), Some(wer)) = (s.hits_amorce, s.wer_amorce) {
+            println!(
+                "{:<24} {:>13.1} % {:>9.1} % {:>15.2}×",
+                format!("{}  amorcé", s.label),
+                miss_rate(s.names_total, hits),
+                wer * 100.0,
+                s.secs_amorce / s.audio
+            );
+        }
+    }
+    println!(
+        "\nUn écart de ±1 ou 2 noms sur {names} est du bruit : un amorçage qui sert se voit franchement."
+    );
+    println!(
+        "Le temps réel se lit avec la feature utilisée : `voice` nu est le proxy du téléphone, `voice-metal` ne l'est pas."
+    );
 }
 
 fn miss_rate(total: usize, hits: usize) -> f64 {
@@ -377,7 +505,7 @@ fn miss_rate(total: usize, hits: usize) -> f64 {
     }
 }
 
-fn write_json(path: &Path, rows: &[(&Case, Run, Option<Run>)], prompt: &str) {
+fn models_json(rows: &[(&Case, Run, Option<Run>)], prompt: &str) -> serde_json::Value {
     let mut cases = Vec::new();
     for (case, nu, amorce) in rows {
         let mut entry = BTreeMap::new();
@@ -390,7 +518,11 @@ fn write_json(path: &Path, rows: &[(&Case, Run, Option<Run>)], prompt: &str) {
         }
         cases.push(entry);
     }
-    let out = serde_json::json!({ "amorcage": prompt, "cas": cases });
+    serde_json::json!({ "amorcage": prompt, "cas": cases })
+}
+
+fn write_json(path: &Path, models: serde_json::Map<String, serde_json::Value>) {
+    let out = serde_json::Value::Object(models);
     match std::fs::write(path, serde_json::to_string_pretty(&out).unwrap()) {
         Ok(()) => println!("\njson écrit dans {path:?}"),
         Err(e) => eprintln!("écriture json impossible : {e}"),
