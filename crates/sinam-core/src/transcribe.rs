@@ -407,6 +407,11 @@ mod decoder {
         /// `ggml-large-v3-turbo-q5_0.bin`...). Fichier de DONNÉES, jamais
         /// commité, jamais embarqué dans le crate.
         pub fn new(model_path: &str) -> Result<Self, CoreError> {
+            // ⚠️ Ne PAS activer `flash_attn` ici : mesuré sur processeur, il
+            // rend le décodage **45 % plus lent** (11 s contre 15 s sur la
+            // même prise, reproduit deux fois) pour un texte rigoureusement
+            // identique. Le gain qu'on lui prête vient des GPU de datacenter,
+            // pas d'un cœur ARM.
             let ctx = WhisperContext::new_with_params(
                 model_path,
                 WhisperContextParameters::default(),
