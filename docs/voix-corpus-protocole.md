@@ -154,3 +154,90 @@ Trois lectures possibles, et les trois sont des réponses :
 Le tableau comparatif sert à la deuxième question, celle du modèle embarqué :
 la colonne `temps réel` dit ce que la transcription coûtera sur le téléphone, et
 la colonne des noms dit ce qu'on perd en descendant de taille.
+
+## Le moteur du téléphone, mesuré (2026-09-03)
+
+Android expose depuis sa version 13 tout ce qu'il faut pour poser exactement la
+même question à son moteur : `EXTRA_AUDIO_SOURCE` injecte un fichier à la place
+du micro, et `EXTRA_BIASING_STRINGS` souffle une liste de noms au décodeur,
+c'est-à-dire l'équivalent de notre amorçage. La comparaison a donc pu se faire
+sur **les mêmes octets** et avec **la même liste de noms**, sans que personne
+relise le corpus à voix haute.
+
+Les deux moteurs sont notés par **le même code** : `--hyp label=fichier.tsv`
+fait entrer des transcriptions faites ailleurs dans le banc, où elles passent
+par le scoreur des passes locales. Vérifié en réinjectant au banc ses propres
+sorties, qui retombent au chiffre près sur les deux populations. Sans ça, on
+comparerait deux façons de compter autant que deux moteurs.
+
+### Résultat
+
+| | erreurs sur les noms | WER |
+|---|---|---|
+| whisper small, nu | 56,4 % | 19,7 % |
+| **whisper small, amorcé** | **41,0 %** | 21,9 % |
+| Android, nu | 59,0 % | 18,7 % |
+| Android, amorcé | 66,7 % | 31,8 % |
+
+**À nu, les deux sont à égalité.** 59,0 contre 56,4, c'est un nom d'écart sur
+39, sous le seuil de bruit fixé plus haut. Sur le texte ordinaire le moteur du
+téléphone est même très légèrement devant. L'idée reçue selon laquelle la
+transcription native serait mauvaise ne se retrouve pas.
+
+**Ce qui départage est l'amorçage, et il ne fonctionne que d'un côté.** Il fait
+gagner 6 noms à whisper et en fait perdre 3 à Android. Surtout, le garde-fou
+casse : sur les noms absents de la liste soufflée, Android tombe de 7/18 à 5/18,
+ce qui est exactement l'erreur que l'amorçage doit empêcher, retournée. Et son
+WER passe de 18,7 % à 31,8 %, donc la liste ne perturbe pas que les noms, elle
+déforme la phrase entière. L'API existe, elle est bien atteinte, elle n'est pas
+ignorée : c'est le moteur qui en fait mauvais usage.
+
+**Conclusion : on garde whisper amorcé par le graphe.** Le moteur du téléphone
+reste un repli honnête pour le texte, jamais pour les noms.
+
+### Deux pièges payés pendant la mesure
+
+**L'audio doit être poussé à la vitesse de la parole.** Nourri à environ trois
+fois cette vitesse, le décodeur en flux d'Android ne rend que la FIN de chaque
+prise (« Dentiste ça. » pour une phrase entière) : ce qui arrive trop vite est
+écrasé avant d'être lu. La première passe donnait un moteur catastrophique qui
+n'était qu'un harnais parlant trop vite. Un banc qui nourrit un moteur plus vite
+que le réel ne mesure pas ce moteur.
+
+**Une graphie correcte peut être une faute.** Android écrit « Guérin » là où le
+graphe stocke « Guerin ». Il a raison en français, et il fabrique quand même une
+fiche en double. Le banc compte donc une erreur, ce qui est le bon comportement
+puisque c'est bien ce que ça coûte, mais la cause est côté résolution d'entité,
+pas côté transcription.
+
+### Refaire la mesure
+
+Le côté whisper sort du banc ; `--prompt-out` écrit la liste de noms retenue,
+un nom par ligne, pour que l'autre moteur reçoive exactement la même :
+
+```bash
+cargo run --release --features voice --example voice_bench -- \
+    --model ~/.synapse/models/whisper/ggml-small-q5_1.bin \
+    --corpus ~/.synapse/corpus-voix --db ~/.synapse/synapse.db \
+    --lang fr --brief --prompt-out /tmp/amorcage.txt
+```
+
+Le côté Android sort d'un banc instrumenté vivant dans le dépôt de l'app, qui
+lit le corpus poussé sur l'appareil et rend un TSV `cas`, `nu`, `amorcé`. Deux
+précautions y sont indissociables : viser le build **demo**, dont l'identifiant
+distinct donne un bac à sable distinct, et lancer par `am instrument` et jamais
+par `connectedAndroidTest`, qui **désinstalle l'app testée** en sortie et emporte
+ses données avec elle. Payé une fois, sur un téléphone de tous les jours.
+
+Puis les deux colonnes se rejoignent dans le même tableau :
+
+```bash
+cargo run --release --features voice --example voice_bench -- \
+    --model ~/.synapse/models/whisper/ggml-small-q5_1.bin \
+    --corpus ~/.synapse/corpus-voix --db ~/.synapse/synapse.db \
+    --lang fr --brief --hyp android=/tmp/resultats.tsv
+```
+
+Les lignes venues de `--hyp` affichent `n/a` en temps réel : la mesure a été
+faite sur une autre machine, et écrire un `0.00×` ferait passer une absence de
+mesure pour une mesure.

@@ -47,6 +47,11 @@ struct Args {
     brief: bool,
     show_prompt: bool,
     vad: Option<String>,
+    /// `label=fichier.tsv` : des transcriptions faites AILLEURS, à noter ici.
+    hyps: Vec<String>,
+    /// Où écrire la liste de noms retenue, pour qu'un autre moteur reçoive
+    /// exactement le même amorçage.
+    prompt_out: Option<PathBuf>,
 }
 
 fn parse_args() -> Args {
@@ -59,6 +64,8 @@ fn parse_args() -> Args {
     let mut brief = false;
     let mut show_prompt = false;
     let mut vad = None;
+    let mut hyps = Vec::new();
+    let mut prompt_out = None;
     let mut it = std::env::args().skip(1);
     while let Some(flag) = it.next() {
         let mut value = || it.next().unwrap_or_else(|| fail(&format!("{flag} attend une valeur")));
@@ -72,6 +79,8 @@ fn parse_args() -> Args {
             "--brief" => brief = true,
             "--show-prompt" => show_prompt = true,
             "--vad" => vad = Some(value()),
+            "--hyp" => hyps.push(value()),
+            "--prompt-out" => prompt_out = Some(PathBuf::from(value())),
             other => fail(&format!("option inconnue : {other}")),
         }
     }
@@ -88,6 +97,8 @@ fn parse_args() -> Args {
         brief,
         show_prompt,
         vad,
+        hyps,
+        prompt_out,
     }
 }
 
@@ -134,6 +145,10 @@ struct Summary {
     secs_nu: f64,
     secs_amorce: f64,
     audio: f64,
+    /// Faux pour une ligne `--hyp` : le temps a été passé sur une autre
+    /// machine, donc il n'y a pas de facteur temps réel à afficher. Écrire
+    /// « 0.00× » y ferait passer une absence de mesure pour une mesure.
+    timed: bool,
 }
 
 fn main() {
@@ -172,12 +187,27 @@ fn main() {
 
     let mut table = Vec::new();
     let mut json_models = serde_json::Map::new();
+    // L'amorçage du premier modèle sert de référence aux lignes `--hyp` : le
+    // découpage « dans le prompt / hors du prompt » n'a de sens que si les deux
+    // moteurs ont reçu la même liste de noms.
+    let mut reference_prompt: Option<String> = None;
     for model in &args.models {
         let label = short_label(model);
         let decoder = Transcriber::new(model)
             .unwrap_or_else(|e| fail(&format!("modèle {label} : {e}")))
             .with_threads(args.threads);
         let prompt = decoder.fit_prompt(&graph_names, PRIME_TOKEN_BUDGET);
+        if reference_prompt.is_none() {
+            reference_prompt = Some(prompt.clone());
+            if let Some(path) = args.prompt_out.as_ref() {
+                let noms: Vec<&str> =
+                    prompt.trim_end_matches('.').split(", ").filter(|n| !n.is_empty()).collect();
+                match std::fs::write(path, noms.join("\n") + "\n") {
+                    Ok(()) => println!("amorçage écrit dans {path:?} ({} noms)", noms.len()),
+                    Err(e) => eprintln!("écriture de l'amorçage impossible : {e}"),
+                }
+            }
+        }
 
         println!("\n════════ {label} ════════");
         if !prompt.is_empty() {
@@ -209,10 +239,45 @@ fn main() {
             rows.push((case, nu, amorce));
         }
 
-        let summary = summarize(&label, &rows, audio_seconds, &prompt);
+        let summary = summarize(&label, &rows, audio_seconds, &prompt, true);
         print_totals(&summary);
         if args.json.is_some() {
             json_models.insert(label.clone(), models_json(&rows, &prompt));
+        }
+        table.push(summary);
+    }
+
+    // Les moteurs qui ne tournent pas ici : leurs transcriptions arrivent déjà
+    // faites, et repassent par le même scoreur, le même corpus, les mêmes noms.
+    for spec in &args.hyps {
+        let (label, path) = spec
+            .split_once('=')
+            .unwrap_or_else(|| fail(&format!("--hyp attend label=fichier.tsv, reçu « {spec} »")));
+        let prompt = reference_prompt.clone().unwrap_or_default();
+        let hyps = load_hyp(Path::new(path));
+
+        println!("\n════════ {label} (hypothèses lues) ════════\n");
+        let mut rows = Vec::new();
+        for case in &cases {
+            let Some((nu, amorce)) = hyps.get(&case.name) else {
+                fail(&format!(
+                    "{path} n'a pas de ligne pour le cas « {} » : un cas manquant compterait \
+                     comme une transcription vide, donc comme un échec, ce qui est faux",
+                    case.name
+                ));
+            };
+            let nu = score(case, nu.clone(), 0, 0.0);
+            let amorce = amorce.as_ref().map(|t| score(case, t.clone(), 0, 0.0));
+            if !args.brief {
+                print_case(case, &nu, amorce.as_ref());
+            }
+            rows.push((case, nu, amorce));
+        }
+
+        let summary = summarize(label, &rows, audio_seconds, &prompt, false);
+        print_totals(&summary);
+        if args.json.is_some() {
+            json_models.insert(label.to_string(), models_json(&rows, &prompt));
         }
         table.push(summary);
     }
@@ -237,6 +302,7 @@ fn summarize(
     rows: &[(&Case, Run, Option<Run>)],
     audio: f64,
     prompt: &str,
+    timed: bool,
 ) -> Summary {
     let amorce_partout = !rows.is_empty() && rows.iter().all(|(_, _, a)| a.is_some());
     // (combien de noms, trouvés nu, trouvés amorcé) pour chaque population.
@@ -275,6 +341,7 @@ fn summarize(
         amorces,
         hors,
         audio,
+        timed,
     }
 }
 
@@ -298,26 +365,61 @@ fn transcribe(
         .unwrap_or_else(|e| fail(&format!("{} : {e}", case.name)));
     let seconds = started.elapsed().as_secs_f64();
 
+    let dropped = out.segments.iter().filter(|s| s.dropped).count();
+    score(case, out.text, dropped, seconds)
+}
+
+/// Note un texte contre un cas.
+///
+/// Séparé du décodage à dessein : c'est le seul endroit qui décide, et une
+/// hypothèse venue d'ailleurs (le moteur du téléphone, lu par `--hyp`) doit
+/// être notée par ce code-ci. Deux scoreurs, même écrits d'après la même
+/// intention, compareraient les scoreurs autant que les moteurs.
+fn score(case: &Case, text: String, dropped: usize, seconds: f64) -> Run {
     let mut hits = 0;
     let mut misses = Vec::new();
     for name in &case.names {
-        if contains_name(&out.text, name) {
+        if contains_name(&text, name) {
             hits += 1;
         } else {
             misses.push(name.clone());
         }
     }
     Run {
-        wer: wer(&case.expected, &out.text),
-        text: out.text,
+        wer: wer(&case.expected, &text),
+        text,
         hits,
         misses,
-        dropped: out.segments.iter().filter(|s| s.dropped).count(),
+        dropped,
         seconds,
     }
 }
 
 // ── Corpus ──────────────────────────────────────────────────────────────────
+
+/// Lit des transcriptions faites ailleurs : `cas`, `nu`, `amorcé` (facultatif),
+/// séparés par des tabulations. Le nom du cas est celui du corpus, sans
+/// extension, ce qui rend l'appariement vérifiable au lieu de positionnel.
+fn load_hyp(path: &Path) -> BTreeMap<String, (String, Option<String>)> {
+    let raw = std::fs::read_to_string(path).unwrap_or_else(|e| fail(&format!("{path:?} : {e}")));
+    let mut out = BTreeMap::new();
+    for (n, line) in raw.lines().enumerate() {
+        if line.trim().is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let mut cols = line.split('\t');
+        let Some(cas) = cols.next().map(str::trim) else { continue };
+        let nu = cols.next().unwrap_or("").trim().to_string();
+        // Une troisième colonne absente veut dire « ce moteur n'a pas été
+        // amorcé », pas « l'amorçage n'a rien rendu » : la nuance change le
+        // tableau, donc elle reste un Option.
+        let amorce = cols.next().map(|t| t.trim().to_string());
+        if out.insert(cas.to_string(), (nu, amorce)).is_some() {
+            fail(&format!("{path:?} ligne {} : le cas « {cas} » est en double", n + 1));
+        }
+    }
+    out
+}
 
 fn load_corpus(dir: &Path, graph_names: &[String]) -> Vec<Case> {
     let mut cases = Vec::new();
@@ -476,25 +578,35 @@ fn print_run(label: &str, case: &Case, run: &Run) {
     }
 }
 
+/// Le facteur temps réel, ou « n/a » quand la ligne vient d'un autre appareil.
+/// Afficher « 0.00× » ferait passer une absence de mesure pour une mesure.
+fn rt(s: &Summary, seconds: f64) -> String {
+    if s.timed {
+        format!("{:.2}×", seconds / s.audio)
+    } else {
+        "n/a".to_string()
+    }
+}
+
 fn print_totals(s: &Summary) {
     println!("──── {} : {} noms vérifiés ────", s.label, s.names_total);
     if s.names_total == 0 {
         println!("aucun nom à vérifier : la mesure qui compte est muette, ajoutez des .noms");
     }
     println!(
-        "nu      : erreurs sur les noms {:.1} % · WER moyen {:.1} % · {} rejet(s) · {:.2}× le temps réel",
+        "nu      : erreurs sur les noms {:.1} % · WER moyen {:.1} % · {} rejet(s) · {} le temps réel",
         miss_rate(s.names_total, s.hits_nu),
         s.wer_nu * 100.0,
         s.dropped_nu,
-        s.secs_nu / s.audio
+        rt(s, s.secs_nu)
     );
     if let (Some(hits), Some(wer)) = (s.hits_amorce, s.wer_amorce) {
         println!(
-            "amorcé  : erreurs sur les noms {:.1} % · WER moyen {:.1} % · {} rejet(s) · {:.2}× le temps réel",
+            "amorcé  : erreurs sur les noms {:.1} % · WER moyen {:.1} % · {} rejet(s) · {} le temps réel",
             miss_rate(s.names_total, hits),
             wer * 100.0,
             s.dropped_amorce,
-            s.secs_amorce / s.audio
+            rt(s, s.secs_amorce)
         );
         println!(
             "écart   : {:+} nom(s) retrouvés grâce à l'amorçage sur {}",
@@ -527,19 +639,19 @@ fn print_table(table: &[Summary]) {
     );
     for s in table {
         println!(
-            "{:<24} {:>13.1} % {:>9.1} % {:>15.2}×",
+            "{:<24} {:>13.1} % {:>9.1} % {:>16}",
             format!("{}  nu", s.label),
             miss_rate(s.names_total, s.hits_nu),
             s.wer_nu * 100.0,
-            s.secs_nu / s.audio
+            rt(s, s.secs_nu)
         );
         if let (Some(hits), Some(wer)) = (s.hits_amorce, s.wer_amorce) {
             println!(
-                "{:<24} {:>13.1} % {:>9.1} % {:>15.2}×",
+                "{:<24} {:>13.1} % {:>9.1} % {:>16}",
                 format!("{}  amorcé", s.label),
                 miss_rate(s.names_total, hits),
                 wer * 100.0,
-                s.secs_amorce / s.audio
+                rt(s, s.secs_amorce)
             );
         }
     }
