@@ -14,6 +14,12 @@ crate-type = ["cdylib", "staticlib", "lib"]
 default = ["sinam-core/ort-download"]
 # Android/iOS builds: the app ships libonnxruntime and ort loads it at runtime.
 ort-dynamic = ["sinam-core/ort-dynamic"]
+# Transcription vocale locale (whisper.cpp). Hors du defaut : elle exige cmake
+# au build, et l'amorcage par le graphe, lui, est expose sans elle.
+voice = ["sinam-core/voice"]
+# Desktop Apple : le GPU divise le temps de decodage par trois ou quatre, et
+# sur une machine de bureau il n'y a aucune raison de s'en passer.
+voice-metal = ["voice", "sinam-core/voice-metal"]
 
 [dependencies]
 sinam-core = { path = "../sinam-core", version = "0.1.0", default-features = false }

@@ -40,6 +40,9 @@ rusqlite = { version = "0.40", features = ["bundled", "load_extension"] }
 # 0.1.9): both sides touch the same vec0 tables during the migration.
 # (0.1.10-alpha.4 also ships a broken crate tarball: missing diskann source.)
 sqlite-vec = { version = "=0.1.9" }
+# Transcription vocale locale : liaison Rust de whisper.cpp (ggml). Le modele
+# est de la DONNEE passee en chemin, comme celui des embeddings.
+whisper-rs = { version = "0.16", default-features = false }
 
 [profile.release]
 lto = true

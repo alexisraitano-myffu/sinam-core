@@ -12,6 +12,16 @@ default = ["ort-download"]
 ort-download = ["fastembed/ort-download-binaries"]
 # Mobile targets (Android/iOS): onnxruntime is shipped by the app and loaded dynamically.
 ort-dynamic = ["fastembed/ort-load-dynamic"]
+# Transcription vocale (whisper.cpp). Hors du defaut a dessein : whisper.cpp se
+# compile par cmake, que toutes les cibles n'ont pas sous la main, et la seule
+# partie qui porte une decision produit (l'amorcage par le graphe) est du SQL
+# pur qui compile TOUJOURS. Activer la feature n'ajoute que le decodeur.
+voice = ["dep:whisper-rs"]
+# Apple seulement : whisper.cpp sur le GPU via Metal. Mesure sur M1, un clip de
+# 4 s en large-v3-turbo-q5 : environ 8 s sur le processeur seul, environ 3 s ici.
+# Feature separee parce qu'elle ne construit que sur macOS/iOS : la CI Linux et
+# Windows reste sur `voice` nu.
+voice-metal = ["voice", "whisper-rs/metal"]
 
 [dependencies]
 fastembed = { workspace = true }
@@ -22,6 +32,7 @@ thiserror = { workspace = true }
 serde_json = { version = "1", features = ["preserve_order"] }
 rusqlite = { workspace = true }
 sqlite-vec = { workspace = true }
+whisper-rs = { workspace = true, optional = true }
 uuid = { workspace = true }
 # Blocking HTTP for the classifier call; rustls so Android needs no OpenSSL.
 ureq = { version = "2", default-features = false, features = ["tls", "json"] }
@@ -44,8 +55,19 @@ hmac = "0.12"
 
 [dev-dependencies]
 tempfile = "3"
+# Lecture WAV du banc de mesure vocal. Rust pur, aucun codec system.
+hound = "3"
 # Same ort that fastembed uses; only for the ort_probe bisect example.
 ort = { version = "=2.0.0-rc.12", default-features = false, features = ["std"] }
 libloading = "0.9"
 backtrace = "0.3"
 libc = "0.2"
+
+# Le banc de mesure vocal ne se compile qu'avec le decodeur.
+[[example]]
+name = "voice_bench"
+required-features = ["voice"]
+
+[[example]]
+name = "transcribe_cli"
+required-features = ["voice"]

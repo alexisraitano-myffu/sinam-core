@@ -39,6 +39,8 @@ pub enum CoreError {
     Embedding(String),
     #[error("storage error: {0}")]
     Storage(String),
+    #[error("transcription failed: {0}")]
+    Transcription(String),
     // The two LLM failure classes have DIFFERENT host policies: an HTTP/
     // network error aborts the whole run (entries stay queued for a retry),
     // a content error only fails the one entry.

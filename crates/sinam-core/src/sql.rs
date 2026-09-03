@@ -206,6 +206,43 @@ impl SqlConnection {
         crate::digest::gather_week(&conn, crate::decay::resolve_now(now_sql), days)
     }
 
+    /// Les noms du graphe qui doivent amorcer la transcription vocale, dans
+    /// l'ordre où ils méritent la place du prompt (voir `transcribe.rs`).
+    /// Lecture pure, donc elle vit ici : l'hôte l'appelle dans sa propre
+    /// transaction, juste avant de décoder.
+    pub fn voice_names(
+        &self,
+        max_names: u32,
+        include_aliases: bool,
+    ) -> Result<Vec<String>, CoreError> {
+        let conn = self.lock()?;
+        let opts = crate::transcribe::PrimeOptions {
+            max_names: max_names as usize,
+            include_aliases,
+            ..Default::default()
+        };
+        crate::transcribe::graph_names(&conn, &opts)
+    }
+
+    /// Le même amorçage, déjà rendu en texte et coupé au budget de tokens.
+    /// C'est ce qu'un hôte sans décodeur chargé (donc sans tokenizer) doit
+    /// appeler ; avec la feature `voice`, `Transcriber::fit_prompt` coupe au
+    /// token près à partir de `voice_names`.
+    pub fn voice_prompt(
+        &self,
+        budget_tokens: u32,
+        max_names: u32,
+        include_aliases: bool,
+    ) -> Result<String, CoreError> {
+        let conn = self.lock()?;
+        let opts = crate::transcribe::PrimeOptions {
+            budget_tokens: budget_tokens as usize,
+            max_names: max_names as usize,
+            include_aliases,
+        };
+        crate::transcribe::graph_prompt(&conn, &opts)
+    }
+
     /// One-call read snapshot for an app replica fed by THIS local
     /// core db instead of the desktop backend's HTTP endpoints. Same JSON
     /// shapes as `/changes`, `/feed`, `/projects`, `/project/{id}/state`,

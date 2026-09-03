@@ -441,6 +441,18 @@ pub(crate) fn init_schema(conn: &Connection) -> Result<(), rusqlite::Error> {
         "ALTER TABLE entities ADD COLUMN memory_strength REAL DEFAULT 1.0",
         // keep the failure reason on the inbox row.
         "ALTER TABLE inbox ADD COLUMN error TEXT",
+        // Le texte tel qu'il est ARRIVÉ, quand ce qui a été gardé n'est pas
+        // lui : sortie brute de la transcription vocale, ou frappe avant
+        // autocorrection. NULL veut dire « content est déjà le brut », donc
+        // toutes les lignes écrites avant cette colonne restent vraies.
+        //
+        // Un correcteur, humain ou machine, se trompe exactement là où ça coûte
+        // le plus cher : noms propres, acronymes, jargon, formulations
+        // volontaires. Contrairement à une mauvaise note, il n'y a rien
+        // derrière pour rattraper si la source est écrasée. La colonne est la
+        // même règle que partout ailleurs : rien de ce que l'utilisateur a
+        // produit ne disparaît sur décision d'une machine.
+        "ALTER TABLE inbox ADD COLUMN raw_content TEXT",
         // fact category (identity | dates | work | ...).
         "ALTER TABLE facts ADD COLUMN category TEXT",
         // re-résumé flag, set whenever a fact of the entity changes.

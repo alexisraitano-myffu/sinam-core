@@ -26,6 +26,7 @@ mod sql;
 mod storage;
 mod summaries;
 mod sync;
+mod transcribe;
 mod usage;
 
 pub use digest::next_occurrence_str;
@@ -37,5 +38,13 @@ pub use resources::{extract_page, extract_urls, fetch_and_extract, PageText};
 pub use routing::{Brain, ProjectSynthesis, RouteContext, RouteReport};
 pub use sql::{connect, SqlConnection, SqlResult, SqlValue};
 pub use storage::{EntityHit, NoteHit, ResourceHit, Storage};
+// amorçage de la transcription par le graphe (toujours compilé) et décodeur
+// whisper.cpp (feature `voice`).
+pub use transcribe::{
+    estimate_tokens, fit_names, graph_names, graph_prompt, join_names, pcm16_to_f32, pcm16le_to_f32,
+    rank_names, NameCandidate, PrimeOptions, PRIME_TOKEN_BUDGET, SAMPLE_RATE_HZ,
+};
+#[cfg(feature = "voice")]
+pub use transcribe::{Segment, SpeechGuard, TranscribeOptions, Transcriber, Transcript};
 // consommation réelle des appels LLM (tokens, jamais un prix).
 pub use usage::{usage_summary, LlmUsage, Op as LlmOp};

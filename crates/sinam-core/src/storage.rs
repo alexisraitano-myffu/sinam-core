@@ -590,6 +590,33 @@ mod tests {
         storage.upsert_note_vectors(id, &[unit_vec(theta)]).unwrap();
     }
 
+    /// Le brut d'une capture ne se perd pas quand on garde le corrigé, et une
+    /// ligne écrite avant l'existence de la colonne reste vraie : NULL y veut
+    /// dire « le contenu EST le brut », pas « le brut est perdu ».
+    #[test]
+    fn une_capture_garde_le_texte_tel_qu_il_est_arrive() {
+        let (_dir, storage) = open_temp();
+        {
+            let conn = storage.lock().unwrap();
+            conn.execute(
+                "INSERT INTO inbox (id, content, raw_content, source) \
+                 VALUES ('c1', 'appeler Théo Marchand', 'appeler Théo Marchant', 'voice')",
+                [],
+            )
+            .unwrap();
+            conn.execute("INSERT INTO inbox (id, content) VALUES ('c2', 'tapé au clavier')", [])
+                .unwrap();
+            let brut: String = conn
+                .query_row("SELECT raw_content FROM inbox WHERE id = 'c1'", [], |r| r.get(0))
+                .unwrap();
+            assert_eq!(brut, "appeler Théo Marchant");
+            let sans: Option<String> = conn
+                .query_row("SELECT raw_content FROM inbox WHERE id = 'c2'", [], |r| r.get(0))
+                .unwrap();
+            assert!(sans.is_none());
+        }
+    }
+
     // Annuler une action ne peut viser qu'une tâche VIVANTE : ni une note, ni
     // une tâche archivée, ni une ligne qui attend encore d'être validée — on
     // répondrait à la place de l'utilisateur.
