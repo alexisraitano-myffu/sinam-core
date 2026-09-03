@@ -955,6 +955,37 @@ mod tests {
         );
     }
 
+    /// Le brut de la dictée traverse la synchronisation comme le reste.
+    ///
+    /// Ce n'est pas gratuit par construction : les déclencheurs sont réécrits
+    /// à chaque ouverture depuis les colonnes RÉELLES de la table, ce qui fait
+    /// qu'une colonne ajoutée par migration se met à voyager toute seule. Le
+    /// test verrouille cette propriété-là, parce que la remplacer un jour par
+    /// une liste de colonnes en dur perdrait le brut en silence, et que le
+    /// brut ne sert justement qu'aux cas où le reste a déjà échoué.
+    #[test]
+    fn le_brut_dune_capture_traverse_la_synchronisation() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = mem_store(&dir, "a.db");
+        let b = mem_store(&dir, "b.db");
+
+        exec(
+            &a,
+            "INSERT INTO inbox (id, content, raw_content, source) \
+             VALUES ('c1', 'appeler Théo Marchand', 'appeler Théo Marchant', 'voice')",
+        );
+        exec(&a, "INSERT INTO inbox (id, content) VALUES ('c2', 'tapé au clavier')");
+
+        sync_once(&a, &b);
+
+        assert_eq!(
+            Some("appeler Théo Marchant".into()),
+            query_one(&b, "SELECT raw_content FROM inbox WHERE id='c1'")
+        );
+        // Et NULL reste NULL : une capture tapée n'invente pas un brut.
+        assert_eq!(None, query_one(&b, "SELECT raw_content FROM inbox WHERE id='c2'"));
+    }
+
     #[test]
     fn fresh_peer_bootstraps_and_stores_converge() {
         let dir = tempfile::tempdir().unwrap();
