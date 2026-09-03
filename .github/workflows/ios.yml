@@ -57,13 +57,24 @@ jobs:
       - name: Build FFI staticlib (device)
         run: |
           cargo build -p sinam-core-ffi --release --no-default-features \
-            --features voice --target aarch64-apple-ios
+            --features voice-metal --target aarch64-apple-ios
 
       - name: Build FFI staticlib (simulator)
         run: |
           cargo build -p sinam-core-ffi --release --no-default-features \
-            --features voice --target aarch64-apple-ios-sim
+            --features voice-metal --target aarch64-apple-ios-sim
 
+      # `voice-metal` et pas `voice` : whisper.cpp sait utiliser le GPU sur iOS,
+      # là où sur Android le Mali lui est inaccessible sans un chantier Vulkan.
+      # Mesuré sur un M1, Metal met `small` à 0,25× le temps réel contre 0,13×
+      # au processeur seul, et rend `large-v3-turbo` jouable ; les puces A18 et
+      # suivantes sont de la même classe. C'est ce qui autorise un modèle par
+      # défaut différent sur iPhone et sur Android, décidé par la mesure et non
+      # par symétrie.
+      #
+      # Ça ajoute `libggml-metal.a` aux archives à fusionner (le glob ci-dessous
+      # la prend) et impose à l'app de lier **Metal et MetalKit** en plus
+      # d'Accelerate.
       # whisper.cpp arrive en archives SÉPARÉES (libwhisper, libggml*), posées
       # par cmake dans le OUT_DIR du build script. Sur Android le cdylib les
       # absorbe ; ici on produit une bibliothèque STATIQUE, donc elles ne sont
@@ -93,8 +104,8 @@ jobs:
           set -euo pipefail
           # ⚠️ MÊMES features que la lib iOS : la surface UniFFI dépend de
           # `voice`, et un binding généré sans elle n'a pas de `Transcriber`.
-          cargo build -p sinam-core-ffi --release --features voice
-          cargo run -p sinam-core-ffi --release --features voice \
+          cargo build -p sinam-core-ffi --release --features voice-metal
+          cargo run -p sinam-core-ffi --release --features voice-metal \
             --bin uniffi-bindgen -- \
             generate --library target/release/libsinam_core_ffi.dylib \
             --language swift --out-dir target/swift
@@ -196,7 +207,7 @@ jobs:
           set -euo pipefail
           (cd target && zip -qry SinamCore.xcframework.zip SinamCore.xcframework)
           (cd target/swift && zip -qy ../SinamCore-swift-bindings.zip *)
-          NOTES="Build $(git rev-parse --short HEAD) — onnxruntime iOS $ORT_IOS_VERSION (l'app doit lier onnxruntime.xcframework du pod onnxruntime-c à côté), transcription whisper.cpp incluse (lier aussi Accelerate.framework)."
+          NOTES="Build $(git rev-parse --short HEAD) — onnxruntime iOS $ORT_IOS_VERSION (l'app doit lier onnxruntime.xcframework du pod onnxruntime-c à côté), transcription whisper.cpp avec Metal (lier aussi Accelerate, Metal et MetalKit)."
           gh release create core-ios --title "SinamCore iOS (rolling)" \
             --notes "$NOTES" --latest=false 2>/dev/null || \
             gh release edit core-ios --notes "$NOTES"
