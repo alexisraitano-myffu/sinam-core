@@ -27,6 +27,7 @@ use rusqlite::types::Value as SqlV;
 use rusqlite::{params, params_from_iter, Connection};
 use serde_json::{json, Map, Value};
 
+use chrono::Datelike;
 use crate::embedder::{CoreError, Embedder};
 use crate::storage::{search_entities_on, search_live_tasks_on, Storage, TaskHit};
 
@@ -321,7 +322,7 @@ impl Brain {
         // une capture peut laisser PLUSIEURS souvenirs. Ce qui suit
         // ne lit plus les champs au singulier mais la liste, qui les englobe :
         // sans `memories`, elle contient exactement le souvenir d'avant.
-        let souvenirs = souvenirs(classified);
+        let souvenirs = souvenirs(classified, content, &ctx.today);
         let note_kind = souvenirs
             .first()
             .map(|s| s.kind.clone())
@@ -2026,6 +2027,57 @@ struct Souvenir {
     summary: String,
 }
 
+/// N0-b, la part que le code peut GARANTIR : l'année d'une date déjà émise.
+///
+/// Le mois et le quantième sont un jugement, et le modèle le rend bien. L'année,
+/// elle, se vérifie. Le 2026-09-05 sur le Pixel, « ce week-end » est revenu en
+/// `2027-09-06` : bon dimanche, année fausse — alors que le prompt portait la
+/// réponse en toutes lettres (« NEXT … Sunday 2026-09-06 »).
+///
+/// La passe ne touche NI au mois NI au quantième. Elle garde la DIRECTION que
+/// porte la date émise — passé ou futur — et rapproche l'année de `today`.
+///
+/// Mesurée sur les 197 dates étiquetées de `scripts/parity/corpus` :
+///   · **197/197 laissées intactes.** Elle n'abîme jamais une date juste.
+///   · **82 %** des années fausses d'un an rattrapées : toutes celles qui ne
+///     RENVERSENT pas la direction, ce qui est exactement le cas ci-dessus.
+///
+/// Ce qu'elle ne rattrape pas, et c'est assumé : une date passée projetée dans
+/// le futur (« hier » rendu en 2027). La corruption y renverse la direction, et
+/// aucun signal gratuit ne la rend. Deux candidats ont été mesurés et rejetés :
+/// le `kind` n'est pas un invariant (85 épisodes passés contre 1 futur), et le
+/// repère de la phrase n'est pas toujours celui qui date la note — « j'ai appelé
+/// le plombier ce matin, il vient mardi » se range sur le mardi. Les deux font
+/// tomber l'innocuité de 197/197 à 134/197 : ici, la simplicité EST le résultat.
+///
+/// Garde unique : une capture qui ÉCRIT un millésime est crue sur parole.
+fn corriger_annee(emise: &str, capture: &str, today: &str) -> Option<String> {
+    if contient_millesime(capture) {
+        return None;
+    }
+    let tete: String = emise.trim().chars().take(10).collect();
+    let jour = chrono::NaiveDate::parse_from_str(&tete, "%Y-%m-%d").ok()?;
+    let today = chrono::NaiveDate::parse_from_str(today.trim(), "%Y-%m-%d").ok()?;
+    let futur = jour >= today;
+    let meilleur = (-2..=2)
+        .filter_map(|dy| jour.with_year(jour.year() + dy))
+        .filter(|c| (*c >= today) == futur)
+        .min_by_key(|c| (*c - today).num_days().abs())?;
+    (meilleur != jour).then(|| meilleur.format("%Y-%m-%d").to_string())
+}
+
+/// Un millésime ÉCRIT dans la capture : quatre chiffres ouverts par 19 ou 20 et
+/// isolés — « le 12 juin 2026 » compte, la sous-chaîne de « 20264 » non.
+fn contient_millesime(capture: &str) -> bool {
+    let o: Vec<char> = capture.chars().collect();
+    o.windows(4).enumerate().any(|(i, w)| {
+        w.iter().all(char::is_ascii_digit)
+            && ((w[0] == '1' && w[1] == '9') || (w[0] == '2' && w[1] == '0'))
+            && i.checked_sub(1).map_or(true, |p| !o[p].is_ascii_digit())
+            && o.get(i + 4).map_or(true, |n| !n.is_ascii_digit())
+    })
+}
+
 /// Les souvenirs d'une capture, quelle que soit la FORME de la sortie.
 ///
 /// `memories` est la forme canonique. Les champs au singulier restent lus en
@@ -2033,7 +2085,7 @@ struct Souvenir {
 /// modèles d'avant ce jour, de toutes les baselines enregistrées, et du
 /// classifieur on-device. Un tableau à un élément se relit exactement comme un
 /// scalaire, donc la bascule n'a pas de moment charnière.
-fn souvenirs(classified: &Value) -> Vec<Souvenir> {
+fn souvenirs(classified: &Value, capture: &str, today: &str) -> Vec<Souvenir> {
     let lire = |v: &Value| -> Option<Souvenir> {
         let texte = v
             .get("note")
@@ -2061,11 +2113,16 @@ fn souvenirs(classified: &Value) -> Vec<Souvenir> {
                 .map(str::trim)
                 .filter(|s| !s.is_empty())
                 .map(String::from),
+            // l'année passe par `corriger_annee` ; le mois, le quantième et
+            // l'éventuelle queue horaire ressortent tels quels.
             event_date: v
                 .get("event_date")
                 .and_then(Value::as_str)
                 .filter(|s| !s.is_empty())
-                .map(String::from),
+                .map(|s| match corriger_annee(s, capture, today) {
+                    Some(jour) => format!("{jour}{}", s.chars().skip(10).collect::<String>()),
+                    None => s.to_string(),
+                }),
             recurring: truthy(v.get("event_recurring")),
             summary: v
                 .get("summary")
@@ -4182,6 +4239,112 @@ mod tests {
 
     /// « J'ai appelé le dentiste ce matin, il faut que je rappelle jeudi » :
     /// un épisode vécu ET une tâche datée.
+    // ── N0-b : la passe année ────────────────────────────────────────────
+    // Chaque cas vient d'une mesure sur `scripts/parity/corpus`, jamais d'une
+    // intuition. Les identifiants cités sont ceux du corpus.
+
+    /// Le bug qui a ouvert le sujet : Pixel, 2026-09-05, « Ce week-end, je fais
+    /// un week-end en famille vers Saint-Étienne ». Haiku a rendu 2027-09-06,
+    /// dimanche juste, année fausse — et le prompt portait « NEXT … Sunday
+    /// 2026-09-06 » en toutes lettres.
+    #[test]
+    fn l_annee_fausse_du_week_end_est_ramenee() {
+        assert_eq!(
+            corriger_annee("2027-09-06", "Ce week-end, je fais un week-end en famille", "2026-09-05"),
+            Some("2026-09-06".to_string())
+        );
+    }
+
+    /// Le piège inverse, `p-dur-birthday-durable` : +334 jours et POURTANT juste.
+    /// « L'anniversaire de Yanis c'est le 12 juin » est au présent, donc N0-b
+    /// résout vers la prochaine occurrence ; le corpus l'a corrigé en ce sens le
+    /// 2026-09-01. Le candidat 2026-06-12 est passé, direction opposée : écarté.
+    #[test]
+    fn une_date_lointaine_mais_juste_survit() {
+        assert_eq!(
+            corriger_annee("2027-06-12", "L'anniversaire de Yanis c'est le 12 juin", "2026-07-13"),
+            None
+        );
+    }
+
+    /// La direction est gardée, jamais devinée : une date passée reste passée, et
+    /// l'année remonte jusqu'au passé le PLUS PROCHE — 2026, pas 2025.
+    #[test]
+    fn la_direction_de_la_date_emise_est_conservee() {
+        assert_eq!(
+            corriger_annee("2024-07-12", "j'ai mangé chez Léa hier", "2026-07-13"),
+            Some("2026-07-12".to_string())
+        );
+    }
+
+    /// Ce que la passe NE rattrape PAS, et qui est écrit pour ne pas être oublié :
+    /// « hier » projeté d'un an devient futur, la direction bascule, et rien de
+    /// gratuit ne la rend. Le test fige la limite mesurée (les 18 %).
+    #[test]
+    fn une_date_passee_projetee_dans_le_futur_echappe_a_la_passe() {
+        assert_eq!(
+            corriger_annee("2027-07-12", "j'ai mangé chez Léa hier", "2026-07-13"),
+            None
+        );
+    }
+
+    /// Garde unique : la capture qui écrit son millésime est crue sur parole.
+    #[test]
+    fn un_millesime_ecrit_interdit_toute_correction() {
+        assert_eq!(
+            corriger_annee("2027-06-20", "Rappel : le salon Vivatech c'est le 20 juin 2027", "2026-07-13"),
+            None
+        );
+    }
+
+    /// Un nombre à quatre chiffres n'est pas un millésime dès qu'il est collé à
+    /// d'autres : sans ça, la garde se déclencherait sur du bruit et gèlerait la
+    /// passe pour rien.
+    #[test]
+    fn un_nombre_colle_n_est_pas_un_millesime() {
+        assert!(contient_millesime("le 12 juin 2026"));
+        assert!(contient_millesime("(2026)"));
+        assert!(!contient_millesime("commande 202612 partie"));
+        assert!(!contient_millesime("on a atteint 10k utilisateurs"));
+    }
+
+    /// Le mois et le quantième sont au modèle : la passe ne les touche jamais,
+    /// même quand ils sont manifestement faux.
+    #[test]
+    fn le_mois_et_le_quantieme_ne_bougent_jamais() {
+        let sortie = corriger_annee("2027-02-30", "ce week-end", "2026-09-05");
+        assert_eq!(sortie, None, "date impossible : on ne bricole pas, on laisse");
+        assert_eq!(
+            corriger_annee("2027-12-25", "ce week-end", "2026-09-05"),
+            Some("2026-12-25".to_string()),
+            "le 25 décembre reste le 25 décembre"
+        );
+    }
+
+    /// Une queue horaire éventuelle survit à la correction.
+    #[test]
+    fn la_queue_horaire_est_preservee() {
+        let v = json!({"note": "Week-end en famille", "kind": "event",
+                       "event_date": "2027-09-06T18:00:00"});
+        let s = souvenirs(&v, "Ce week-end, je fais un week-end en famille", "2026-09-05");
+        assert_eq!(s[0].event_date.as_deref(), Some("2026-09-06T18:00:00"));
+    }
+
+    /// La passe s'applique aux DEUX formes de sortie : la liste `memories` et
+    /// les champs au singulier que rendent les baselines et le classifieur
+    /// on-device. C'est tout l'intérêt de la poser dans `lire`.
+    #[test]
+    fn les_deux_formes_de_sortie_passent_par_la_meme_correction() {
+        let liste = json!({"memories": [
+            {"note": "Week-end en famille", "kind": "event", "event_date": "2027-09-06"}]});
+        let singulier = json!({"atomic_note": "Week-end en famille",
+                               "atomic_note_kind": "event", "event_date": "2027-09-06"});
+        for v in [liste, singulier] {
+            let s = souvenirs(&v, "Ce week-end en famille", "2026-09-05");
+            assert_eq!(s[0].event_date.as_deref(), Some("2026-09-06"));
+        }
+    }
+
     fn deux_souvenirs() -> Value {
         let mut c = abandon();
         c["memories"] = json!([
