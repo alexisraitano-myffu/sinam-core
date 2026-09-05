@@ -529,6 +529,83 @@ impl PairingSession {
     }
 }
 
+/// Le canal par CODE (SPAKE2), côté app.
+///
+/// Il n'existait que pour Python, donc pour le backend. Conséquence côté
+/// produit : rejoindre par code était réservé aux hôtes qui embarquent un
+/// backend, c'est-à-dire au desktop. `codeJoin = !compactLayout` dans l'app
+/// n'était pas un choix de mise en page déguisé — c'était la seule chose
+/// possible. Or un Mac n'a pas de caméra : si un téléphone doit pouvoir
+/// enrôler un Mac, c'est par le code que ça passe, et le téléphone doit donc
+/// savoir tenir ce canal lui-même.
+///
+/// Un mauvais code réussit quand même, mais donne une clé DIFFÉRENTE : c'est
+/// la confirmation par MAC qui tranche, jamais l'absence d'erreur ici.
+#[derive(uniffi::Object)]
+pub struct CodePairing {
+    inner: std::sync::Mutex<Option<sinam_core::CodePairing>>,
+    msg: Vec<u8>,
+}
+
+#[uniffi::export]
+impl CodePairing {
+    /// Démarrer avec le code à 6 chiffres affiché en face.
+    #[uniffi::constructor]
+    pub fn start(code: String) -> Arc<Self> {
+        let (inner, msg) = sinam_core::CodePairing::start(&code);
+        Arc::new(Self {
+            inner: std::sync::Mutex::new(Some(inner)),
+            msg,
+        })
+    }
+
+    /// Notre message de poignée, à envoyer au pair.
+    pub fn msg(&self) -> Vec<u8> {
+        self.msg.clone()
+    }
+
+    /// Compléter avec le message du pair → la clé de canal (32 octets).
+    /// Consomme la session : un second appel échoue.
+    pub fn finish(&self, peer_msg: Vec<u8>) -> Result<Vec<u8>, CoreError> {
+        let taken = self
+            .inner
+            .lock()
+            .map_err(|_| CoreError::Storage {
+                msg: "code pairing lock poisoned".to_string(),
+            })?
+            .take();
+        let inner = taken.ok_or_else(|| CoreError::Storage {
+            msg: "code pairing already finished".to_string(),
+        })?;
+        Ok(inner.finish(&peer_msg)?.to_vec())
+    }
+}
+
+/// Côté joiner : le MAC de confirmation sur la transcription.
+#[uniffi::export]
+pub fn pairing_code_confirm_mac(
+    channel_key: Vec<u8>,
+    member_msg: Vec<u8>,
+    joiner_msg: Vec<u8>,
+) -> Result<Vec<u8>, CoreError> {
+    let ck = key32(&channel_key, "channel_key")?;
+    Ok(sinam_core::code_confirm_mac(&ck, &member_msg, &joiner_msg).to_vec())
+}
+
+/// Côté membre : vérification à temps constant. Un écart brûle un essai.
+#[uniffi::export]
+pub fn pairing_code_confirm_verify(
+    channel_key: Vec<u8>,
+    member_msg: Vec<u8>,
+    joiner_msg: Vec<u8>,
+    mac: Vec<u8>,
+) -> Result<bool, CoreError> {
+    let ck = key32(&channel_key, "channel_key")?;
+    Ok(sinam_core::code_confirm_verify(
+        &ck, &member_msg, &joiner_msg, &mac,
+    ))
+}
+
 /// Scanner side: decode the QR and derive the channel key.
 #[uniffi::export]
 pub fn pairing_accept(qr: String) -> Result<PairingAccept, CoreError> {
@@ -549,6 +626,17 @@ pub fn pairing_offer_addrs(qr: String) -> Result<Vec<String>, CoreError> {
 }
 
 /// AEAD-seal a payload under the channel key. Returns base64.
+///
+/// Seule la CLÉ doit faire 32 octets. Les deux étiquettes authentifiées sont
+/// de longueur libre, et c'est essentiel : sur le canal QR ce sont bien deux
+/// clés publiques de 32 octets, mais sur le canal par CODE ce sont les messages
+/// SPAKE2, qui n'en font pas 32.
+///
+/// Cette contrainte de trop est restée invisible tant que le canal par code
+/// n'existait que côté Python (qui, lui, ne l'a jamais eue). Mesuré sur un
+/// Pixel 9a le 05/09 : le téléphone acceptait la demande, l'utilisateur
+/// approuvait, et le scellement échouait en « Storage » — c'est-à-dire un
+/// message d'erreur qui ne parle de rien.
 #[uniffi::export]
 pub fn pairing_seal(
     channel_key: Vec<u8>,
@@ -557,12 +645,11 @@ pub fn pairing_seal(
     plaintext: Vec<u8>,
 ) -> Result<String, CoreError> {
     let ck = key32(&channel_key, "channel_key")?;
-    let op = key32(&offer_pub, "offer_pub")?;
-    let ap = key32(&accept_pub, "accept_pub")?;
-    Ok(sinam_core::pairing_seal(&ck, &op, &ap, &plaintext)?)
+    Ok(sinam_core::pairing_seal(&ck, &offer_pub, &accept_pub, &plaintext)?)
 }
 
 /// Open what `pairing_seal` produced → the plaintext bytes.
+/// Mêmes règles de longueur que [`pairing_seal`] : la clé seule est contrainte.
 #[uniffi::export]
 pub fn pairing_open(
     channel_key: Vec<u8>,
@@ -571,9 +658,7 @@ pub fn pairing_open(
     sealed_b64: String,
 ) -> Result<Vec<u8>, CoreError> {
     let ck = key32(&channel_key, "channel_key")?;
-    let op = key32(&offer_pub, "offer_pub")?;
-    let ap = key32(&accept_pub, "accept_pub")?;
-    Ok(sinam_core::pairing_open(&ck, &op, &ap, &sealed_b64)?)
+    Ok(sinam_core::pairing_open(&ck, &offer_pub, &accept_pub, &sealed_b64)?)
 }
 
 fn key32(bytes: &[u8], what: &str) -> Result<[u8; 32], CoreError> {
