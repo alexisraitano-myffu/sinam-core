@@ -61,8 +61,20 @@ done
 # The Kotlin binding is generated from a HOST build of the same crate. The
 # UniFFI surface is feature-dependent since the decoder arrived: the host build
 # must carry the SAME features, sinon le binding Kotlin sort sans `Transcriber`.
-CARGO_ENCODED_RUSTFLAGS="" cargo build -p sinam-core-ffi --features "${FEATURES#ort-dynamic,}"
-cargo run -p sinam-core-ffi --bin uniffi-bindgen -- generate \
+# ⚠️ Les exports du bloc `voice` ci-dessus visent le NDK, et ils SURVIVENT
+# jusqu'ici. La compilation hôte se retrouvait alors à mélanger le clang du NDK
+# avec une cible `arm64-apple-macosx`, et cassait sur « unknown argument
+# '--build-id=sha1' ». Le .so, lui, sortait très bien : l'échec était donc
+# silencieux, et il rendait le binding Kotlin irrégénérable — ce qui ne se voit
+# que le jour où la surface FFI change vraiment.
+#
+# On retire ces variables-là, une par une, et RIEN d'autre : le PATH doit garder
+# le cmake du SDK, dont le binaire compile parfaitement pour l'hôte. C'était la
+# chaîne d'outils qui était fausse, pas cmake.
+HOST_ENV=(env -u CMAKE_TOOLCHAIN_FILE -u ANDROID_NDK_ROOT -u ANDROID_NDK
+          -u CMAKE_GENERATOR -u CMAKE_MAKE_PROGRAM -u CARGO_ENCODED_RUSTFLAGS)
+"${HOST_ENV[@]}" cargo build -p sinam-core-ffi --features "${FEATURES#ort-dynamic,}"
+"${HOST_ENV[@]}" cargo run -p sinam-core-ffi --bin uniffi-bindgen -- generate \
     --library target/debug/libsinam_core_ffi.dylib \
     --language kotlin --out-dir "$OUT/kotlin"
 
