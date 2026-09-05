@@ -385,6 +385,65 @@ fn post_local(config: &LlmConfig, params: &Value) -> Result<Value, CoreError> {
     }))
 }
 
+/// Combien de fois une requête est rejouée quand c'est le LIEN qui a
+/// lâché, et l'attente entre deux essais.
+///
+/// Le seul réessai qui existait jusqu'ici couvrait les sorties inutilisables
+/// (réponse tronquée). Une connexion qui tombe n'était rattrapée nulle part,
+/// alors que c'est l'incident le plus banal en mobilité : le 04/09/2026, une
+/// coupure de quelques secondes a suffi à arrêter une passe entière, et avec
+/// elle le tissage.
+///
+/// Trois essais, six secondes de patience en tout. Court exprès : ce code
+/// tourne sur le thread du cycle, partagé avec le chemin de capture sur
+/// mobile. Une microcoupure se traverse ; une vraie panne rend la main vite et
+/// laisse la reprise à l'ordonnanceur de l'hôte, qui lui sait attendre le
+/// retour du réseau.
+const HTTP_ATTEMPTS: u32 = 3;
+const HTTP_BACKOFF_SECS: [u64; 2] = [2, 6];
+
+/// Une panne de transport se rejoue ; une réponse d'autorité, non.
+///
+/// La distinction est tout l'intérêt de la chose : rejouer trois fois un 401
+/// ne fait que brûler du temps et des jetons devant une clé qui restera
+/// refusée, tandis qu'abandonner sur un DNS qui n'a pas répondu jette une
+/// passe entière pour rien.
+fn retryable(e: &ureq::Error) -> bool {
+    match e {
+        // 408 et 429 sont des « reviens plus tard » explicites ; les 5xx sont
+        // des pannes d'en face. Tout le reste (401, 403, 400, 404…) est un
+        // verdict : le rejouer donnerait le même.
+        ureq::Error::Status(code, _) => matches!(code, 408 | 429 | 500..=599),
+        // DNS, connexion refusée, TLS, délai dépassé — la coupure réseau.
+        ureq::Error::Transport(_) => true,
+    }
+}
+
+/// Envoie la requête, en la RECONSTRUISANT à chaque essai : `ureq::Request` est
+/// consommée par `send_string`, donc un réessai ne peut pas réutiliser la
+/// précédente. D'où le constructeur passé en fermeture plutôt qu'une requête
+/// déjà bâtie.
+fn send_with_retry(
+    build: impl Fn() -> ureq::Request,
+    body: &str,
+) -> Result<ureq::Response, CoreError> {
+    let mut attempt: u32 = 0;
+    loop {
+        match build().send_string(body) {
+            Ok(response) => return Ok(response),
+            Err(e) => {
+                attempt += 1;
+                if attempt >= HTTP_ATTEMPTS || !retryable(&e) {
+                    return Err(http_error(e));
+                }
+                std::thread::sleep(std::time::Duration::from_secs(
+                    HTTP_BACKOFF_SECS[(attempt - 1) as usize],
+                ));
+            }
+        }
+    }
+}
+
 /// Map a `ureq` transport/status error to `LlmHttp` (shared by both providers).
 fn http_error(e: ureq::Error) -> CoreError {
     match e {
@@ -406,20 +465,20 @@ fn post_anthropic(config: &LlmConfig, params: &Value) -> Result<Value, CoreError
         .trim_end_matches('/');
     let url = format!("{base}/v1/messages");
 
-    let mut request = ureq::post(&url)
-        .timeout(std::time::Duration::from_secs(600))
-        .set("content-type", "application/json")
-        .set("anthropic-version", ANTHROPIC_VERSION);
-    request = match &config.fuel_token {
-        Some(token) => request
-            .set("x-api-key", "placeholder-real-key-lives-on-the-proxy")
-            .set("x-synapse-token", token),
-        None => request.set("x-api-key", &config.api_key),
+    let build = || {
+        let request = ureq::post(&url)
+            .timeout(std::time::Duration::from_secs(600))
+            .set("content-type", "application/json")
+            .set("anthropic-version", ANTHROPIC_VERSION);
+        match &config.fuel_token {
+            Some(token) => request
+                .set("x-api-key", "placeholder-real-key-lives-on-the-proxy")
+                .set("x-synapse-token", token),
+            None => request.set("x-api-key", &config.api_key),
+        }
     };
 
-    let response = request
-        .send_string(&params.to_string())
-        .map_err(http_error)?;
+    let response = send_with_retry(build, &params.to_string())?;
     response
         .into_json()
         .map_err(|e| CoreError::LlmHttp(format!("invalid response body: {e}")))
@@ -439,12 +498,16 @@ fn post_openai(config: &LlmConfig, params: &Value) -> Result<Value, CoreError> {
         .trim_end_matches('/');
     let url = format!("{base}/v1/chat/completions");
 
-    let response = ureq::post(&url)
-        .timeout(std::time::Duration::from_secs(600))
-        .set("content-type", "application/json")
-        .set("authorization", &format!("Bearer {}", config.api_key))
-        .send_string(&anthropic_to_openai(config, params).to_string())
-        .map_err(http_error)?;
+    let build = || {
+        ureq::post(&url)
+            .timeout(std::time::Duration::from_secs(600))
+            .set("content-type", "application/json")
+            .set("authorization", &format!("Bearer {}", config.api_key))
+    };
+    let response = send_with_retry(
+        build,
+        &anthropic_to_openai(config, params).to_string(),
+    )?;
     let body: Value = response
         .into_json()
         .map_err(|e| CoreError::LlmHttp(format!("invalid response body: {e}")))?;
@@ -785,6 +848,91 @@ mod tests {
 
     fn cfg(base: String) -> LlmConfig {
         cfg_provider(base, LlmProvider::Anthropic)
+    }
+
+    /// Un serveur qui ne répond QUE par un statut, et qui compte les
+    /// connexions reçues. C'est le seul moyen de prouver qu'un verdict n'est
+    /// pas rejoué : compter les essais, pas lire le message d'erreur.
+    fn stub_status(status: u16, serve: usize) -> (String, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let hits = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let seen = hits.clone();
+        std::thread::spawn(move || {
+            for (i, mut stream) in listener.incoming().flatten().enumerate() {
+                seen.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                // Lire la requête ENTIÈRE avant de répondre — même piège que
+                // `stub_server`, et il s'est refermé sur ce test : fermer une
+                // socket dont l'entrée n'a pas été lue envoie un RST, que le
+                // client rapporte en « connection reset ». C'est-à-dire une
+                // panne de TRANSPORT, donc rejouable : le test comptait alors
+                // deux connexions au lieu d'une, mais seulement sous charge.
+                let mut req: Vec<u8> = Vec::new();
+                let mut buf = [0u8; 1024];
+                loop {
+                    let Ok(n) = stream.read(&mut buf) else { break };
+                    if n == 0 {
+                        break;
+                    }
+                    req.extend_from_slice(&buf[..n]);
+                    let Some(head_end) = req
+                        .windows(4)
+                        .position(|w| w == b"\r\n\r\n")
+                        .map(|p| p + 4)
+                    else {
+                        continue;
+                    };
+                    let head = String::from_utf8_lossy(&req[..head_end]).to_lowercase();
+                    let want: usize = head
+                        .split("content-length:")
+                        .nth(1)
+                        .and_then(|s| s.split("\r\n").next())
+                        .and_then(|s| s.trim().parse().ok())
+                        .unwrap_or(0);
+                    if req.len() - head_end >= want {
+                        break;
+                    }
+                }
+                let _ = write!(
+                    stream,
+                    "HTTP/1.1 {status} NOPE\r\ncontent-type: application/json\r\n\
+                     content-length: 2\r\nconnection: close\r\n\r\n{{}}",
+                );
+                if i + 1 >= serve {
+                    break;
+                }
+            }
+        });
+        (base, hits)
+    }
+
+    #[test]
+    fn a_verdict_is_not_replayed_but_a_breakdown_is() {
+        // Ce qui distingue les deux n'est pas la gravité, c'est l'utilité de
+        // recommencer. Une clé refusée le restera ; un 503 ou un DNS muet, non.
+        let deny = ureq::Error::Status(401, ureq::Response::new(401, "no", "{}").unwrap());
+        assert!(!retryable(&deny), "401 rejoué = jetons brûlés pour rien");
+        let bad = ureq::Error::Status(400, ureq::Response::new(400, "no", "{}").unwrap());
+        assert!(!retryable(&bad));
+        let missing = ureq::Error::Status(404, ureq::Response::new(404, "no", "{}").unwrap());
+        assert!(!retryable(&missing));
+
+        for code in [408u16, 429, 500, 502, 503, 529] {
+            let e = ureq::Error::Status(code, ureq::Response::new(code, "later", "{}").unwrap());
+            assert!(retryable(&e), "{code} devrait être rejoué");
+        }
+    }
+
+    #[test]
+    fn an_unusable_key_is_asked_once_and_only_once() {
+        // Le serveur est prêt à répondre trois fois ; on vérifie qu'on ne lui
+        // demande qu'une seule. Sans quoi une clé expirée ferait attendre huit
+        // secondes de plus chaque capture, pour le même refus.
+        let (base, hits) = stub_status(401, 3);
+        let err = post_messages(&cfg(base), &json!({"messages": []})).unwrap_err();
+        assert!(matches!(err, CoreError::LlmHttp(_)));
+        assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 1);
     }
 
     fn cfg_provider(base: String, provider: LlmProvider) -> LlmConfig {
