@@ -68,6 +68,7 @@ pub fn apply_action(
         "reject_project_attach" => {
             resolve_proposal(conn, "project_attach_proposals", s(p, "id"), "rejected")
         }
+        "found_space" => found_space(conn, p),
         "rename_space" => rename_space(conn, p),
         "rename_device" => rename_device(conn, p),
         "set_device_revoked" => set_device_revoked(conn, p),
@@ -989,6 +990,75 @@ fn reclassify_entry_as_fact(conn: &Connection, p: &Map<String, Value>) -> Result
 // here: the UI blocks those gestures upfront, and a queued action must never
 // wedge on a state a peer changed first.
 
+/// Fonder l'espace, au moment où l'utilisateur le demande.
+///
+/// La fondation était jusqu'ici un effet de bord : le premier appareil à
+/// prendre le verrou du cycle écrivait au passage une ligne `space` nommée
+/// « Ma mémoire » en dur, des heures après que l'utilisateur ait cliqué sur
+/// « Créer ma mémoire ». Il ne voyait donc jamais nommer la sienne, et le
+/// geste fondateur ne fondait rien.
+///
+/// Deux écritures, un seul geste, une seule transaction (l'appelant l'ouvre) :
+/// la ligne `space` et, si personne ne tisse encore, le verrou du cycle. Qui
+/// crée une mémoire en est le premier tisseur — c'est ce que la fondation
+/// implicite faisait déjà, dans l'autre sens.
+///
+/// **Idempotent, et c'est essentiel.** Un espace déjà fondé n'est jamais
+/// réécrit : ni son `space_id`, ni son nom. Un réplica dont la ligne `space`
+/// vient d'arriver par réplication (le chemin « Rejoindre ») doit pouvoir
+/// rejouer cette action sans rien casser — l'écraser fabriquerait un espace
+/// rival dont le HLC plus frais gagnerait la fusion LWW, exactement ce que
+/// `schema.rs` interdit.
+fn found_space(conn: &Connection, p: &Map<String, Value>) -> Result<Value, CoreError> {
+    let existing: Option<String> = conn
+        .query_row("SELECT space_id FROM space WHERE id = 'space'", [], |r| {
+            r.get(0)
+        })
+        .map(Some)
+        .or_else(|e| match e {
+            rusqlite::Error::QueryReturnedNoRows => Ok(None),
+            other => Err(other),
+        })?;
+    if let Some(space_id) = existing {
+        return Ok(json!({ "status": "already_founded", "space_id": space_id }));
+    }
+
+    // Le nom vient de l'utilisateur. Le repli n'est PAS un défaut produit :
+    // c'est le filet d'un appelant qui n'aurait rien passé, et l'écran, lui,
+    // pré-remplit son champ et exige une saisie non vide.
+    let name = opt(p, "name").unwrap_or("Ma mémoire");
+    let space_id = uuid::Uuid::new_v4().to_string();
+    conn.execute(
+        "INSERT INTO space (id, space_id, name, created_at) \
+         VALUES ('space', ?1, ?2, CURRENT_TIMESTAMP)",
+        params![space_id, name],
+    )?;
+
+    // Le verrou seulement s'il est libre : fonder ne doit jamais arracher le
+    // tissage à quelqu'un. Le cas se produit à l'envers de ce qu'on imagine —
+    // un appareil peut avoir pris le verrou avant que l'espace existe, c'est
+    // précisément l'ancien chemin implicite.
+    let owner: Option<String> = conn
+        .query_row("SELECT device_id FROM sync_owner WHERE id = 'owner'", [], |r| {
+            r.get(0)
+        })
+        .map(Some)
+        .or_else(|e| match e {
+            rusqlite::Error::QueryReturnedNoRows => Ok(None),
+            other => Err(other),
+        })?;
+    if owner.is_none() {
+        let me = crate::sync::device_id(conn)?;
+        conn.execute(
+            "INSERT INTO sync_owner (id, device_id, epoch, claimed_at) \
+             VALUES ('owner', ?1, 1, CURRENT_TIMESTAMP)",
+            params![me],
+        )?;
+    }
+
+    Ok(json!({ "status": "founded", "space_id": space_id }))
+}
+
 /// Port of `app.py::space_patch`.
 fn rename_space(conn: &Connection, p: &Map<String, Value>) -> Result<Value, CoreError> {
     let Some(name) = opt(p, "name") else {
@@ -1225,6 +1295,67 @@ mod tests {
             )["status"],
             "not_found"
         );
+    }
+
+    #[test]
+    fn founding_names_the_space_takes_the_lock_and_never_refounds() {
+        let (_dir, conn) = setup();
+        let me: String = conn
+            .query_row("SELECT v FROM sync_meta WHERE k = 'device_id'", [], |r| r.get(0))
+            .unwrap();
+
+        let r = apply(&conn, "found_space", json!({"name": "La mémoire d'Alexis"}));
+        assert_eq!(r["status"], "founded");
+        let first_id = r["space_id"].as_str().unwrap().to_string();
+
+        // Le nom saisi est celui qui est écrit — plus de « Ma mémoire » posé
+        // dans le dos de l'utilisateur des heures plus tard.
+        let name: String = conn
+            .query_row("SELECT name FROM space WHERE id = 'space'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(name, "La mémoire d'Alexis");
+
+        // Qui fonde tisse : le verrou est pris dans le même geste.
+        let (owner, epoch): (String, i64) = conn
+            .query_row("SELECT device_id, epoch FROM sync_owner WHERE id = 'owner'", [], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })
+            .unwrap();
+        assert_eq!(owner, me);
+        assert_eq!(epoch, 1);
+
+        // Rejouée — file d'actions, réplica qui vient de recevoir sa ligne —
+        // la fondation ne doit RIEN réécrire. Un second espace dont le HLC est
+        // plus frais gagnerait la fusion LWW et effacerait celui du maillage.
+        let again = apply(&conn, "found_space", json!({"name": "Un autre nom"}));
+        assert_eq!(again["status"], "already_founded");
+        assert_eq!(again["space_id"].as_str().unwrap(), first_id);
+        let name: String = conn
+            .query_row("SELECT name FROM space WHERE id = 'space'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(name, "La mémoire d'Alexis", "une seconde fondation a renommé l'espace");
+    }
+
+    #[test]
+    fn founding_never_steals_the_weave_from_a_device_that_already_holds_it() {
+        // L'ordre inverse existe pour de vrai : l'ancien chemin implicite
+        // prenait le verrou AVANT que l'espace existe.
+        let (_dir, conn) = setup();
+        conn.execute(
+            "INSERT INTO sync_owner (id, device_id, epoch) VALUES ('owner', 'dev-mac', 4)",
+            [],
+        )
+        .unwrap();
+
+        assert_eq!(apply(&conn, "found_space", json!({"name": "Ma mémoire"}))["status"], "founded");
+
+        let (owner, epoch): (String, i64) = conn
+            .query_row("SELECT device_id, epoch FROM sync_owner WHERE id = 'owner'", [], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })
+            .unwrap();
+        assert_eq!(owner, "dev-mac", "fonder a arraché le tissage à un autre appareil");
+        assert_eq!(epoch, 4);
     }
 
     #[test]
