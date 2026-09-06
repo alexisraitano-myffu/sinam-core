@@ -70,6 +70,7 @@ pub fn apply_action(
         }
         "found_space" => found_space(conn, p),
         "keep_past_local" => keep_past_local(conn),
+        "adopt_reset" => adopt_reset(conn),
         "rename_space" => rename_space(conn, p),
         "rename_device" => rename_device(conn, p),
         "set_device_revoked" => set_device_revoked(conn, p),
@@ -1094,7 +1095,65 @@ fn keep_past_local(conn: &Connection) -> Result<Value, CoreError> {
     let plancher: i64 = conn
         .query_row("SELECT v FROM sync_meta WHERE k = 'partage_plancher'", [], |r| r.get(0))
         .unwrap_or(max_seq);
+
+    // Se ré-annoncer, APRÈS avoir posé le plancher.
+    //
+    // Sans ça, garder son passé revenait à disparaître : notre propre ligne
+    // `devices` avait été journalisée à l'ouverture de la base, donc sous le
+    // plancher, donc scellée avec le reste. Constaté sur appareil le 06/09 —
+    // le téléphone rejoint, se synchronise, et n'apparaît nulle part dans la
+    // liste des appareils du Mac. Or c'est cette liste qui porte le retrait
+    // d'un appareil : en sortir n'est pas un détail d'affichage.
+    //
+    // Une seule colonne touchée suffit : le protocole renvoie la ligne
+    // ENTIÈRE dès qu'elle est touchée dans la fenêtre. Et le déclencheur
+    // n'écrit que sur un changement réel de valeur, d'où `CURRENT_TIMESTAMP`
+    // plutôt qu'une réécriture à l'identique, qui ne journaliserait rien.
+    let me = crate::sync::device_id(conn)?;
+    conn.execute(
+        "UPDATE devices SET last_seen = CURRENT_TIMESTAMP WHERE device_id = ?1",
+        params![me],
+    )?;
+
     Ok(json!({ "status": "ok", "plancher": plancher }))
+}
+
+/// Céder son propre espace pour en adopter un autre.
+///
+/// Le trou qu'elle ferme, constaté sur appareil le 06/09 : un téléphone qui
+/// avait fondé sa mémoire pouvait rejoindre celle d'un Mac, l'appairage
+/// annonçait « rejoint », la jambe retour passait, le jeton était délivré — et
+/// la synchro refusait ensuite en silence, `skipped: other_space`. La garde
+/// d'espace préfère toujours la ligne `space` locale à celle que l'appairage
+/// vise, et rien côté app ne l'effaçait. Le backend, lui, le faisait depuis
+/// toujours (`api/join.py::_adopt_reset`) : c'est l'app qui n'avait pas son
+/// pendant, et le symptôme était le pire possible, un succès affiché sans
+/// rien derrière.
+///
+/// Deux précautions, et elles comptent autant l'une que l'autre :
+///
+/// * les suppressions se font sous le drapeau `applying`, donc **sans être
+///   journalisées**. Sinon nos lignes partiraient dans le maillage comme des
+///   suppressions, et effaceraient l'espace de tout le monde ;
+/// * on purge ensuite leurs entrées de journal déjà écrites, sans quoi notre
+///   ancien espace, au HLC plus frais, gagnerait la fusion LWW contre celui
+///   qu'on vient d'adopter.
+///
+/// Elle ne touche **à aucune table de contenu**. Ce qui décide du sort du passé
+/// est un autre geste, et il est demandé à l'utilisateur (`keep_past_local`).
+fn adopt_reset(conn: &Connection) -> Result<Value, CoreError> {
+    // L'appelant tient une transaction IMMEDIATE : si quoi que ce soit échoue
+    // ici, le drapeau revient à 0 avec le reste. Le laisser levé arrêterait la
+    // journalisation pour toujours, en silence.
+    conn.execute("UPDATE sync_meta SET v = 1 WHERE k = 'applying'", [])?;
+    conn.execute("DELETE FROM space", [])?;
+    conn.execute("DELETE FROM sync_owner", [])?;
+    conn.execute("UPDATE sync_meta SET v = 0 WHERE k = 'applying'", [])?;
+    let purged = conn.execute(
+        "DELETE FROM sync_log WHERE tbl IN ('space', 'sync_owner')",
+        [],
+    )?;
+    Ok(json!({ "status": "ok", "purged": purged }))
 }
 
 /// Port of `app.py::space_patch`.
@@ -1440,6 +1499,35 @@ mod tests {
     }
 
     #[test]
+    fn garder_son_passe_ne_veut_pas_dire_disparaitre() {
+        let (_dir, conn) = setup();
+        let me = crate::sync::device_id(&conn).unwrap();
+        conn.execute(
+            "INSERT OR REPLACE INTO devices (device_id, name, platform) \
+             VALUES (?1, 'Pixel 9a', 'android')",
+            params![me],
+        )
+        .unwrap();
+
+        apply(&conn, "keep_past_local", json!({}));
+
+        // Notre ligne d'appareil doit repasser AU-DESSUS du plancher : c'est
+        // elle qui nous rend visible dans le registre du maillage, et c'est ce
+        // registre qui porte le retrait d'un appareil.
+        let page: serde_json::Value =
+            serde_json::from_str(&crate::sync::changes_since(&conn, 0, 2000).unwrap()).unwrap();
+        let moi = page["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["t"] == "devices" && r["pk"] == me.as_str());
+        let moi = moi.expect("l'appareil qui garde son passé a disparu du maillage");
+        // Et il part ENTIER, pas seulement la colonne qu'on a touchée.
+        assert_eq!(moi["cols"]["name"]["v"], "Pixel 9a");
+        assert_eq!(moi["cols"]["platform"]["v"], "android");
+    }
+
+    #[test]
     fn sans_plancher_rien_ne_change_pour_les_bases_qui_nont_pas_choisi() {
         let (_dir, conn) = setup();
         apply(&conn, "found_space", json!({"name": "Ma mémoire"}));
@@ -1449,6 +1537,65 @@ mod tests {
             !page["rows"].as_array().unwrap().is_empty(),
             "l'absence de plancher a muré une base qui n'a jamais eu à choisir"
         );
+    }
+
+    #[test]
+    fn ceder_son_espace_ne_laisse_aucune_trace_dans_le_maillage() {
+        let (_dir, conn) = setup();
+        apply(&conn, "found_space", json!({"name": "Ma mémoire à moi"}));
+        let avant: i64 = conn
+            .query_row("SELECT COALESCE(MAX(seq), 0) FROM sync_log", [], |r| r.get(0))
+            .unwrap();
+        assert!(avant > 0);
+
+        let r = apply(&conn, "adopt_reset", json!({}));
+        assert_eq!(r["status"], "ok");
+
+        // Plus de repère local : la garde d'espace laissera passer celui qu'on
+        // adopte, au lieu de préférer le nôtre.
+        let restants: i64 = conn
+            .query_row("SELECT COUNT(*) FROM space", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(restants, 0);
+        let owner: i64 = conn
+            .query_row("SELECT COUNT(*) FROM sync_owner", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(owner, 0);
+
+        // Et RIEN n'en sort. Ni les suppressions elles-mêmes — journalisées,
+        // elles effaceraient l'espace de tout le maillage — ni nos anciennes
+        // lignes, dont le HLC plus frais gagnerait la fusion contre l'espace
+        // qu'on vient d'adopter.
+        let page: serde_json::Value =
+            serde_json::from_str(&crate::sync::changes_since(&conn, 0, 2000).unwrap()).unwrap();
+        let sortent: Vec<&str> = page["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r["t"].as_str().unwrap())
+            .collect();
+        assert!(
+            !sortent.contains(&"space") && !sortent.contains(&"sync_owner"),
+            "l'abandon de l'espace part dans le maillage : {sortent:?}"
+        );
+    }
+
+    #[test]
+    fn ceder_son_espace_ne_touche_a_aucun_contenu() {
+        // Ce que devient le passé est une AUTRE décision, et elle se demande.
+        let (_dir, conn) = setup();
+        conn.execute(
+            "INSERT INTO inbox (id, content, device_id, captured_at) \
+             VALUES ('cap-1', 'une capture', 'dev', CURRENT_TIMESTAMP)",
+            [],
+        )
+        .unwrap();
+        apply(&conn, "found_space", json!({"name": "Ma mémoire"}));
+        apply(&conn, "adopt_reset", json!({}));
+        let n: i64 = conn
+            .query_row("SELECT COUNT(*) FROM inbox", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 1, "adopter un espace a effacé du contenu");
     }
 
     #[test]
