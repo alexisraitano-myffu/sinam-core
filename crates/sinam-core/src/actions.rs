@@ -69,6 +69,7 @@ pub fn apply_action(
             resolve_proposal(conn, "project_attach_proposals", s(p, "id"), "rejected")
         }
         "found_space" => found_space(conn, p),
+        "keep_past_local" => keep_past_local(conn),
         "rename_space" => rename_space(conn, p),
         "rename_device" => rename_device(conn, p),
         "set_device_revoked" => set_device_revoked(conn, p),
@@ -1059,6 +1060,43 @@ fn found_space(conn: &Connection, p: &Map<String, Value>) -> Result<Value, CoreE
     Ok(json!({ "status": "founded", "space_id": space_id }))
 }
 
+/// Rejoindre un espace SANS y verser son passé.
+///
+/// Le piège qu'elle ferme : rejoindre est un amorçage par tirage, à sens
+/// unique, et rien ne part au moment du join. Ce qui trompe, c'est que le
+/// push, lui, se construit depuis le journal complet — un appareil qui a déjà
+/// vécu déverse donc tout son passé dans le maillage **au premier cycle de
+/// synchro**, une minute plus tard, sans que rien ne l'annonce. Constaté le
+/// 04/09 : une base abandonnée depuis juin, 1 409 lignes de journal, prêtes à
+/// partir vers l'appareil qui portait la vérité.
+///
+/// Ce n'est pas toujours un bug — c'est même parfois exactement ce qu'on veut,
+/// quand c'est le maître non vierge qui rejoint une base vide et que son
+/// journal est justement ce qui doit partir. Ce qui distingue les deux cas
+/// n'est pas le déversement, c'est **si quelqu'un l'a demandé**. D'où une
+/// action, appelée seulement quand l'utilisateur a répondu.
+///
+/// Elle ne SUPPRIME rien : le passé reste lisible ici, il cesse seulement de
+/// sortir. Un plancher se relève, il ne se rejoue pas à l'envers — et une
+/// suppression, elle, ne se reprend pas.
+fn keep_past_local(conn: &Connection) -> Result<Value, CoreError> {
+    let max_seq: i64 = conn
+        .query_row("SELECT COALESCE(MAX(seq), 0) FROM sync_log", [], |r| r.get(0))
+        .unwrap_or(0);
+    // `max` et pas une écriture sèche : deux appels, ou un appel après que de
+    // nouvelles lignes ont été journalisées, ne doivent jamais faire RECULER le
+    // plancher — ce qui rouvrirait en silence ce qu'on venait de fermer.
+    conn.execute(
+        "INSERT INTO sync_meta (k, v) VALUES ('partage_plancher', ?1) \
+         ON CONFLICT(k) DO UPDATE SET v = max(v, excluded.v)",
+        params![max_seq],
+    )?;
+    let plancher: i64 = conn
+        .query_row("SELECT v FROM sync_meta WHERE k = 'partage_plancher'", [], |r| r.get(0))
+        .unwrap_or(max_seq);
+    Ok(json!({ "status": "ok", "plancher": plancher }))
+}
+
 /// Port of `app.py::space_patch`.
 fn rename_space(conn: &Connection, p: &Map<String, Value>) -> Result<Value, CoreError> {
     let Some(name) = opt(p, "name") else {
@@ -1356,6 +1394,61 @@ mod tests {
             .unwrap();
         assert_eq!(owner, "dev-mac", "fonder a arraché le tissage à un autre appareil");
         assert_eq!(epoch, 4);
+    }
+
+    #[test]
+    fn sceller_son_passe_le_garde_ici_et_ne_recule_jamais() {
+        let (_dir, conn) = setup();
+
+        // Une base qui a vécu : on lui fabrique du journal.
+        apply(&conn, "found_space", json!({"name": "Ma vieille mémoire"}));
+        let avant: i64 = conn
+            .query_row("SELECT COALESCE(MAX(seq), 0) FROM sync_log", [], |r| r.get(0))
+            .unwrap();
+        assert!(avant > 0, "le décor du test ne journalise rien");
+
+        let r = apply(&conn, "keep_past_local", json!({}));
+        assert_eq!(r["status"], "ok");
+        assert_eq!(r["plancher"].as_i64().unwrap(), avant);
+
+        // Rien de ce qui précède ne sort plus.
+        let sortant = crate::sync::changes_since(&conn, 0, 2000).unwrap();
+        let page: serde_json::Value = serde_json::from_str(&sortant).unwrap();
+        assert_eq!(
+            page["rows"].as_array().unwrap().len(),
+            0,
+            "le passé continue de partir dans le maillage malgré le plancher"
+        );
+
+        // Ce qui vient APRÈS, si. Sceller n'est pas se taire pour toujours.
+        apply(&conn, "rename_space", json!({"name": "Le nouveau nom"}));
+        let sortant = crate::sync::changes_since(&conn, 0, 2000).unwrap();
+        let page: serde_json::Value = serde_json::from_str(&sortant).unwrap();
+        assert!(
+            !page["rows"].as_array().unwrap().is_empty(),
+            "le plancher a muré aussi ce qui a été écrit après lui"
+        );
+
+        // Rejouée, elle ne fait pas RECULER le plancher : ce serait rouvrir en
+        // silence un passé qu'on venait de fermer. Elle le relève, ou rien.
+        let apres_ecriture: i64 = conn
+            .query_row("SELECT COALESCE(MAX(seq), 0) FROM sync_log", [], |r| r.get(0))
+            .unwrap();
+        let encore = apply(&conn, "keep_past_local", json!({}));
+        assert_eq!(encore["plancher"].as_i64().unwrap(), apres_ecriture);
+        assert!(apres_ecriture > avant);
+    }
+
+    #[test]
+    fn sans_plancher_rien_ne_change_pour_les_bases_qui_nont_pas_choisi() {
+        let (_dir, conn) = setup();
+        apply(&conn, "found_space", json!({"name": "Ma mémoire"}));
+        let page: serde_json::Value =
+            serde_json::from_str(&crate::sync::changes_since(&conn, 0, 2000).unwrap()).unwrap();
+        assert!(
+            !page["rows"].as_array().unwrap().is_empty(),
+            "l'absence de plancher a muré une base qui n'a jamais eu à choisir"
+        );
     }
 
     #[test]

@@ -307,10 +307,30 @@ fn local_versions(conn: &Connection, table: &str, pk: &str) -> Result<HashMap<St
 
 // ── Producing a changeset ────────────────────────────────────────────────────
 
+/// Le plancher posé par `keep_past_local` : rien de plus ancien ne sort d'ici.
+///
+/// Il vit dans `sync_meta`, qui n'est pas répliquée — c'est une décision de CET
+/// appareil sur SON passé, elle n'a pas à voyager. Absent, il vaut 0 et ne
+/// change donc rien pour les bases qui n'ont jamais eu à choisir.
+fn plancher_de_partage(conn: &Connection) -> i64 {
+    conn.query_row(
+        "SELECT v FROM sync_meta WHERE k = 'partage_plancher'",
+        [],
+        |r| r.get::<_, i64>(0),
+    )
+    .unwrap_or(0)
+}
+
 /// Everything journaled after `since`, as protocol-v1 JSON. Whole rows: any
 /// row touched in the window ships all its columns with their versions.
 /// `next` is the cursor for the following pull; `has_more` signals a full
 /// page (call again from `next`).
+///
+/// Le `since` effectif est le plus grand des deux : celui que le pair demande,
+/// et le plancher que cet appareil s'est posé en rejoignant un espace sans y
+/// verser son passé. Le filtre est ICI, dans l'unique fonction par où sortent
+/// les changements — la poser chez chaque hôte reviendrait à l'écrire trois
+/// fois, et à l'oublier une fois.
 pub(crate) fn changes_since(
     conn: &Connection,
     since: i64,
@@ -318,6 +338,7 @@ pub(crate) fn changes_since(
 ) -> Result<String, CoreError> {
     let tx = conn.unchecked_transaction()?;
     let device = device_id(&tx)?;
+    let since = since.max(plancher_de_partage(&tx));
 
     let mut stmt = tx.prepare(
         "SELECT seq, tbl, pk, col, hlc, dev FROM sync_log
