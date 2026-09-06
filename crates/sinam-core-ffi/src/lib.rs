@@ -48,6 +48,39 @@ impl From<CoreError> for sinam_core::CoreError {
     }
 }
 
+/// L'empreinte des sources compilées dans CET artefact, préfixée d'un
+/// marqueur pour qu'on puisse la lire depuis l'extérieur.
+///
+/// Le préfixe n'est pas décoratif : le `.so` Android et le xcframework iOS
+/// sont vérifiés sans être exécutés — un test d'hôte ne peut pas charger une
+/// bibliothèque arm64-android. Il cherche donc cette chaîne dans les octets du
+/// binaire, ce qui exige un motif improbable ailleurs.
+///
+/// La constante est renvoyée par une fonction exportée : c'est ce qui garantit
+/// que l'éditeur de liens ne l'écarte pas comme du texte mort.
+/// Le marqueur est terminé, et pas seulement préfixé : les chaînes d'un binaire
+/// ne portent pas de fin, et le hasard des octets voisins allongeait
+/// l'empreinte lue de deux caractères hexadécimaux qui ne lui appartenaient pas.
+const MARQUEUR_EMPREINTE: &str =
+    concat!("SINAM-EMPREINTE-SOURCE:", env!("SINAM_EMPREINTE_SOURCE"), ":FIN");
+
+/// `#[used]` : rien dans le code appelé ne dépend de cette chaîne à
+/// l'exécution, et un artefact publié en `--release` est exactement celui où
+/// l'éditeur de liens se permet de l'écarter. Ce serait la panne la plus
+/// pénible du lot — un garde-fou qui devient vert faute de trouver ce qu'il
+/// cherche.
+#[used]
+static MARQUEUR_RETENU: &str = MARQUEUR_EMPREINTE;
+
+/// L'empreinte seule, pour un hôte qui veut la journaliser au démarrage.
+#[uniffi::export]
+pub fn empreinte_source() -> String {
+    MARQUEUR_EMPREINTE
+        .trim_start_matches("SINAM-EMPREINTE-SOURCE:")
+        .trim_end_matches(":FIN")
+        .to_string()
+}
+
 #[uniffi::export]
 pub fn embedding_dim() -> u32 {
     sinam_core::EMBEDDING_DIM as u32

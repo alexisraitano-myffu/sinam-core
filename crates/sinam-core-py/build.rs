@@ -9,48 +9,12 @@
 //! DANS la roue. Un utilisateur installe la roue sans avoir les sources ; une
 //! vérification qui lirait un fichier à côté ne vérifierait rien.
 //!
-//! L'empreinte hache le CONTENU des sources, pas le commit git. Un hash de
-//! commit dirait « à jour » sur un arbre modifié et pas encore commité, ce qui
-//! est exactement la situation d'une journée de travail.
+//! Le calcul lui-même vit dans le crate `empreinte`, partagé avec le lien
+//! UniFFI : deux copies finiraient par diverger, et un garde-fou qui rougit
+//! sans raison est un garde-fou qu'on désarme.
 
 use std::fs;
-use std::path::{Path, PathBuf};
-
-use sha2::{Digest, Sha256};
-
-/// Le contenu d'un fichier AVANT son bloc de tests.
-///
-/// Les tests ne changent aucun comportement : les hacher ferait rougir le
-/// garde-fou côté Python sur une modification qui ne peut rien casser, et un
-/// rouge qu'on apprend à ignorer ne garde plus rien. Mesuré le 2026-09-01 :
-/// retirer sept fixtures périmées suffisait à déclarer la roue en retard.
-///
-/// La troncature au premier `#[cfg(test)]` en début de ligne tient parce que
-/// chaque fichier du cœur n'en a qu'un, et en fin de fichier. Un test Python
-/// garde cette convention, sans quoi la troncature emporterait du vrai code.
-fn sans_les_tests(source: &str) -> &str {
-    match source.find("\n#[cfg(test)]") {
-        Some(i) => &source[..i + 1],
-        None if source.starts_with("#[cfg(test)]") => "",
-        None => source,
-    }
-}
-
-/// Tous les `.rs` d'un dossier, triés par chemin relatif. Le tri est ce qui
-/// rend l'empreinte reproductible : l'ordre de `read_dir` ne l'est pas.
-fn fichiers_rs(racine: &Path, prefixe: &str, out: &mut Vec<(String, PathBuf)>) {
-    let Ok(entrees) = fs::read_dir(racine) else { return };
-    for e in entrees.flatten() {
-        let chemin = e.path();
-        let nom = e.file_name().to_string_lossy().to_string();
-        let rel = if prefixe.is_empty() { nom.clone() } else { format!("{prefixe}/{nom}") };
-        if chemin.is_dir() {
-            fichiers_rs(&chemin, &rel, out);
-        } else if chemin.extension().is_some_and(|x| x == "rs") {
-            out.push((rel, chemin));
-        }
-    }
-}
+use std::path::PathBuf;
 
 fn main() {
     let ici = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -62,20 +26,7 @@ fn main() {
     println!("cargo:rerun-if-changed={}", lien.display());
     println!("cargo:rerun-if-changed={}", manifeste.display());
 
-    let mut fichiers = Vec::new();
-    fichiers_rs(&coeur, "sinam-core", &mut fichiers);
-    fichiers_rs(&lien, "sinam-core-py", &mut fichiers);
-    fichiers.sort_by(|a, b| a.0.cmp(&b.0));
-
-    let mut h = Sha256::new();
-    for (rel, chemin) in &fichiers {
-        let source = fs::read_to_string(chemin).unwrap_or_default();
-        h.update(rel.as_bytes());
-        h.update([0u8]);
-        h.update(sans_les_tests(&source).as_bytes());
-        h.update([0u8]);
-    }
-    let empreinte: String = format!("{:x}", h.finalize()).chars().take(12).collect();
+    let empreinte = empreinte::empreinte(&[(coeur, "sinam-core"), (lien, "sinam-core-py")]);
     println!("cargo:rustc-env=SINAM_EMPREINTE_SOURCE={empreinte}");
 
     // La version des prompts ATTENDUE par ce cœur. Le backend la compare à

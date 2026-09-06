@@ -27,6 +27,9 @@ uniffi = { version = "0.32", features = ["cli"] }
 thiserror = { workspace = true }
 serde_json = { version = "1", features = ["preserve_order"] }
 
+[build-dependencies]
+empreinte = { path = "../empreinte" }
+
 [[bin]]
 name = "uniffi-bindgen"
 path = "src/bin/uniffi-bindgen.rs"
