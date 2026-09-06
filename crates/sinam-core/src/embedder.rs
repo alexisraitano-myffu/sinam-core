@@ -41,11 +41,19 @@ pub enum CoreError {
     Storage(String),
     #[error("transcription failed: {0}")]
     Transcription(String),
-    // The two LLM failure classes have DIFFERENT host policies: an HTTP/
-    // network error aborts the whole run (entries stay queued for a retry),
-    // a content error only fails the one entry.
+    // Les classes d'échec du LLM ont des politiques d'hôte DIFFÉRENTES : une
+    // erreur HTTP/réseau interrompt la passe (les entrées restent en file pour
+    // un réessai), une erreur de contenu ne fait échouer que l'entrée.
     #[error("llm http error: {0}")]
     LlmHttp(String),
+    /// La clé est refusée (401/403). Ce n'est ni un réseau qui flanche ni une
+    /// capture fautive : c'est un état que seul l'utilisateur peut lever, et le
+    /// ranger avec les pannes de transport lui faisait lire « passe interrompue
+    /// par le réseau, nouvelle tentative dans 5 min » face à une clé invalide.
+    /// Il attendait alors une reprise qui ne pouvait pas venir. Vu sur appareil
+    /// le 06/09/2026.
+    #[error("llm auth error: {0}")]
+    LlmAuth(String),
     #[error("llm content error: {0}")]
     LlmContent(String),
 }

@@ -449,7 +449,16 @@ fn http_error(e: ureq::Error) -> CoreError {
     match e {
         ureq::Error::Status(code, resp) => {
             let body = resp.into_string().unwrap_or_default();
-            CoreError::LlmHttp(format!("HTTP {code}: {}", &body[..body.len().min(500)]))
+            let detail = format!("HTTP {code}: {}", &body[..body.len().min(500)]);
+            // 401/403 : la clé est refusée. Séparé du reste ici, à l'endroit
+            // où le code de statut existe encore — plus haut il ne resterait
+            // qu'un texte, et deviner l'authentification dans une chaîne est
+            // exactement le genre de devinette qui se met à mentir.
+            if code == 401 || code == 403 {
+                CoreError::LlmAuth(detail)
+            } else {
+                CoreError::LlmHttp(detail)
+            }
         }
         other => CoreError::LlmHttp(other.to_string()),
     }
@@ -931,8 +940,16 @@ mod tests {
         // secondes de plus chaque capture, pour le même refus.
         let (base, hits) = stub_status(401, 3);
         let err = post_messages(&cfg(base), &json!({"messages": []})).unwrap_err();
-        assert!(matches!(err, CoreError::LlmHttp(_)));
         assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 1);
+        // Et elle se NOMME. Rangée avec les erreurs de transport, elle faisait
+        // annoncer « passe interrompue par le réseau, nouvelle tentative dans
+        // 5 min » à quelqu'un dont la clé était simplement refusée : il
+        // attendait une reprise qui ne pouvait pas venir. Vu sur appareil le
+        // 06/09/2026.
+        assert!(
+            matches!(err, CoreError::LlmAuth(_)),
+            "un 401 doit être une clé refusée, pas une panne de transport : {err:?}"
+        );
     }
 
     fn cfg_provider(base: String, provider: LlmProvider) -> LlmConfig {

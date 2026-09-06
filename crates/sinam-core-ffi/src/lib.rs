@@ -14,6 +14,11 @@ pub enum CoreError {
     Storage { msg: String },
     #[error("llm http error: {msg}")]
     LlmHttp { msg: String },
+    /// La clé est refusée (401/403) : ni un réseau qui flanche, ni une capture
+    /// fautive. L'hôte doit le dire à l'utilisateur et NE PAS reprogrammer une
+    /// passe : elle échouerait à l'identique.
+    #[error("llm auth error: {msg}")]
+    LlmAuth { msg: String },
     #[error("llm content error: {msg}")]
     LlmContent { msg: String },
     #[error("transcription failed: {msg}")]
@@ -27,6 +32,7 @@ impl From<sinam_core::CoreError> for CoreError {
             sinam_core::CoreError::Embedding(msg) => CoreError::Embedding { msg },
             sinam_core::CoreError::Storage(msg) => CoreError::Storage { msg },
             sinam_core::CoreError::LlmHttp(msg) => CoreError::LlmHttp { msg },
+            sinam_core::CoreError::LlmAuth(msg) => CoreError::LlmAuth { msg },
             sinam_core::CoreError::LlmContent(msg) => CoreError::LlmContent { msg },
             sinam_core::CoreError::Transcription(msg) => CoreError::Transcription { msg },
         }
@@ -42,6 +48,7 @@ impl From<CoreError> for sinam_core::CoreError {
             CoreError::Embedding { msg } => sinam_core::CoreError::Embedding(msg),
             CoreError::Storage { msg } => sinam_core::CoreError::Storage(msg),
             CoreError::LlmHttp { msg } => sinam_core::CoreError::LlmHttp(msg),
+            CoreError::LlmAuth { msg } => sinam_core::CoreError::LlmAuth(msg),
             CoreError::LlmContent { msg } => sinam_core::CoreError::LlmContent(msg),
             CoreError::Transcription { msg } => sinam_core::CoreError::Transcription(msg),
         }

@@ -444,11 +444,14 @@ fn connect(py: Python<'_>, db_path: &str) -> PyResult<SqlConnection> {
 }
 
 fn brain_err(e: sinam_core::CoreError) -> PyErr {
-    use pyo3::exceptions::{PyConnectionError, PyValueError};
+    use pyo3::exceptions::{PyConnectionError, PyPermissionError, PyValueError};
     match e {
         // Host policy: HTTP/network aborts the run (like anthropic.APIError),
         // a content error only fails the one entry.
         sinam_core::CoreError::LlmHttp(msg) => PyConnectionError::new_err(msg),
+        // Une clé refusée n'est pas une panne de connexion : le backend doit
+        // pouvoir la nommer autrement, et surtout ne pas la réessayer.
+        sinam_core::CoreError::LlmAuth(msg) => PyPermissionError::new_err(msg),
         sinam_core::CoreError::LlmContent(msg) => PyValueError::new_err(msg),
         other => PyRuntimeError::new_err(other.to_string()),
     }
