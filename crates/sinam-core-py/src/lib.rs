@@ -570,7 +570,7 @@ impl Brain {
     /// Raises ConnectionError on HTTP/network failure (abort-the-run policy)
     /// and ValueError on truncated/invalid content (fail-one-entry policy).
     #[pyo3(signature = (content, day_context, model, api_key, prompts_dir, today,
-                        base_url=None, fuel_token=None))]
+                        base_url=None, fuel_token=None, provider=None))]
     #[allow(clippy::too_many_arguments)]
     fn classify(
         &self,
@@ -583,13 +583,12 @@ impl Brain {
         today: &str,
         base_url: Option<&str>,
         fuel_token: Option<&str>,
+        provider: Option<&str>,
     ) -> PyResult<String> {
         let config = sinam_core::LlmConfig {
             model: model.to_string(),
             api_key: api_key.to_string(),
-            // Backend Mac path is Anthropic today; a later change will expose the
-            // provider selector once the settings endpoint lands.
-            provider: sinam_core::LlmProvider::Anthropic,
+            provider: py_provider(provider)?,
             local: None,
             base_url: base_url.map(String::from),
             fuel_token: fuel_token.map(String::from),
@@ -607,7 +606,7 @@ impl Brain {
     /// regenerated entity ids as a JSON array. HTTP failure stops the pass
     /// silently (stale flags survive) — mirror of the Python `break`.
     #[pyo3(signature = (touched_ids, model, api_key, prompts_dir, today,
-                        base_url=None, fuel_token=None))]
+                        base_url=None, fuel_token=None, provider=None))]
     #[allow(clippy::too_many_arguments)]
     fn resummarize(
         &self,
@@ -619,13 +618,12 @@ impl Brain {
         today: &str,
         base_url: Option<&str>,
         fuel_token: Option<&str>,
+        provider: Option<&str>,
     ) -> PyResult<String> {
         let config = sinam_core::LlmConfig {
             model: model.to_string(),
             api_key: api_key.to_string(),
-            // Backend Mac path is Anthropic today; a later change will expose the
-            // provider selector once the settings endpoint lands.
-            provider: sinam_core::LlmProvider::Anthropic,
+            provider: py_provider(provider)?,
             local: None,
             base_url: base_url.map(String::from),
             fuel_token: fuel_token.map(String::from),
@@ -641,7 +639,7 @@ impl Brain {
     /// Living project synthesis (T5): append + threshold-triggered
     /// refinement. Returns the new summary_md or None (failures never block).
     #[pyo3(signature = (project_id, project_name, new_entry_content, new_entry_count,
-                        model, api_key, prompts_dir, today, base_url=None, fuel_token=None))]
+                        model, api_key, prompts_dir, today, base_url=None, fuel_token=None, provider=None))]
     #[allow(clippy::too_many_arguments)]
     fn synthesize_project(
         &self,
@@ -656,13 +654,12 @@ impl Brain {
         today: &str,
         base_url: Option<&str>,
         fuel_token: Option<&str>,
+        provider: Option<&str>,
     ) -> PyResult<Option<String>> {
         let config = sinam_core::LlmConfig {
             model: model.to_string(),
             api_key: api_key.to_string(),
-            // Backend Mac path is Anthropic today; a later change will expose the
-            // provider selector once the settings endpoint lands.
-            provider: sinam_core::LlmProvider::Anthropic,
+            provider: py_provider(provider)?,
             local: None,
             base_url: base_url.map(String::from),
             fuel_token: fuel_token.map(String::from),
@@ -760,7 +757,7 @@ impl Brain {
     /// (prompt = data `digest.md`, LLM via the core HTTP path). Raises
     /// ConnectionError on HTTP failure, ValueError on empty content.
     #[pyo3(signature = (week_json, model, api_key, prompts_dir, today,
-                        base_url=None, fuel_token=None))]
+                        base_url=None, fuel_token=None, provider=None))]
     #[allow(clippy::too_many_arguments)]
     fn summarize_digest(
         &self,
@@ -772,15 +769,14 @@ impl Brain {
         today: &str,
         base_url: Option<&str>,
         fuel_token: Option<&str>,
+        provider: Option<&str>,
     ) -> PyResult<String> {
         let week: serde_json::Value = serde_json::from_str(week_json)
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
         let config = sinam_core::LlmConfig {
             model: model.to_string(),
             api_key: api_key.to_string(),
-            // Backend Mac path is Anthropic today; a later change will expose the
-            // provider selector once the settings endpoint lands.
-            provider: sinam_core::LlmProvider::Anthropic,
+            provider: py_provider(provider)?,
             local: None,
             base_url: base_url.map(String::from),
             fuel_token: fuel_token.map(String::from),
@@ -810,7 +806,7 @@ impl Brain {
     /// the URL, Brain's OWN connection: call outside host transactions).
     /// `model=None` → no LLM (snippet-fallback summary), like client=None.
     #[pyo3(signature = (url, capture_id=None, model=None, api_key=None, prompts_dir=None,
-                        today=None, base_url=None, fuel_token=None))]
+                        today=None, base_url=None, fuel_token=None, provider=None))]
     #[allow(clippy::too_many_arguments)]
     fn process_resource(
         &self,
@@ -823,8 +819,9 @@ impl Brain {
         today: Option<&str>,
         base_url: Option<&str>,
         fuel_token: Option<&str>,
+        provider: Option<&str>,
     ) -> PyResult<Option<String>> {
-        let config = llm_config_opt(model, api_key, prompts_dir, today, base_url, fuel_token);
+        let config = llm_config_opt(model, api_key, prompts_dir, today, base_url, fuel_token, provider)?;
         py.detach(|| self.inner.process_resource(url, capture_id, config.as_ref()))
             .map_err(brain_err)
     }
@@ -833,7 +830,7 @@ impl Brain {
     /// failure never blocks the others). Returns the stored resource ids as a
     /// JSON array.
     #[pyo3(signature = (content, capture_id=None, model=None, api_key=None, prompts_dir=None,
-                        today=None, base_url=None, fuel_token=None))]
+                        today=None, base_url=None, fuel_token=None, provider=None))]
     #[allow(clippy::too_many_arguments)]
     fn process_capture_resources(
         &self,
@@ -846,8 +843,9 @@ impl Brain {
         today: Option<&str>,
         base_url: Option<&str>,
         fuel_token: Option<&str>,
+        provider: Option<&str>,
     ) -> PyResult<String> {
-        let config = llm_config_opt(model, api_key, prompts_dir, today, base_url, fuel_token);
+        let config = llm_config_opt(model, api_key, prompts_dir, today, base_url, fuel_token, provider)?;
         let ids = py
             .detach(|| self.inner.process_capture_resources(content, capture_id, config.as_ref()))
             .map_err(brain_err)?;
@@ -926,17 +924,37 @@ fn llm_config_opt(
     today: Option<&str>,
     base_url: Option<&str>,
     fuel_token: Option<&str>,
-) -> Option<sinam_core::LlmConfig> {
-    model.map(|model| sinam_core::LlmConfig {
+    provider: Option<&str>,
+) -> PyResult<Option<sinam_core::LlmConfig>> {
+    let provider = py_provider(provider)?;
+    Ok(model.map(|model| sinam_core::LlmConfig {
         model: model.to_string(),
         api_key: api_key.unwrap_or_default().to_string(),
-        provider: sinam_core::LlmProvider::Anthropic,
+        provider,
         local: None,
         base_url: base_url.map(String::from),
         fuel_token: fuel_token.map(String::from),
         prompts_dir: prompts_dir.unwrap_or_default().to_string(),
         today: today.unwrap_or_default().to_string(),
-    })
+    }))
+}
+
+/// The provider a Python host asks for. Stricter than `LlmProvider::parse`,
+/// which falls back to Anthropic on anything it doesn't know: here a typo in
+/// the backend config would silently send a "100 % local" user's captures to
+/// Anthropic, so an unknown name is an error. `local` is refused too: it means
+/// a native callback runtime (the mobile LiteRT path), which Python can't
+/// supply; a local model on a computer is a local OpenAI-compatible server.
+fn py_provider(provider: Option<&str>) -> PyResult<sinam_core::LlmProvider> {
+    match provider.map(|p| p.trim().to_ascii_lowercase()).as_deref() {
+        None | Some("") | Some("anthropic") => Ok(sinam_core::LlmProvider::Anthropic),
+        Some("openai") | Some("openai-compatible") | Some("openai_compatible") => {
+            Ok(sinam_core::LlmProvider::OpenAiCompatible)
+        }
+        Some(other) => Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "provider inconnu : {other:?} (attendu \"anthropic\" ou \"openai\")"
+        ))),
+    }
 }
 
 /// All http(s) URLs in a text, de-duplicated, order-preserving.
