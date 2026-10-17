@@ -349,9 +349,76 @@ pub(crate) fn post_messages(config: &LlmConfig, params: &Value) -> Result<Value,
         }
     };
     match config.provider {
-        LlmProvider::Anthropic => post_anthropic(config, params),
-        LlmProvider::OpenAiCompatible => post_openai(config, params),
+        LlmProvider::Anthropic => post_anthropic(config, params, Patience::CYCLE),
+        LlmProvider::OpenAiCompatible => post_openai(config, params, Patience::CYCLE),
         LlmProvider::Local => post_local(config, params),
+    }
+}
+
+/// Combien de temps un appel attend, et combien de fois il se rejoue.
+#[derive(Clone, Copy)]
+struct Patience {
+    timeout: std::time::Duration,
+    attempts: u32,
+}
+
+impl Patience {
+    /// Le cycle : une classification longue peut prendre des minutes, et une
+    /// microcoupure se traverse (voir `send_with_retry`).
+    const CYCLE: Patience = Patience {
+        timeout: std::time::Duration::from_secs(600),
+        attempts: HTTP_ATTEMPTS,
+    };
+    /// Le bouton « Tester » : quelqu'un attend devant l'écran. Un seul essai,
+    /// et un serveur muet au bout de vingt secondes est une réponse en soi.
+    const PROBE: Patience = Patience {
+        timeout: std::time::Duration::from_secs(20),
+        attempts: 1,
+    };
+}
+
+/// Un vrai appel, le plus petit possible, pour savoir AVANT la nuit si le
+/// réglage marche. Ce que l'utilisateur colle (adresse, nom de modèle, clé) ne
+/// se vérifie pas à la forme : seul le serveur sait s'il connaît ce modèle et
+/// accepte cette clé. Sans ce test, une faute de frappe se découvrait le
+/// lendemain matin, par une file restée pleine.
+///
+/// Même chemin que le cycle (même adresse, mêmes en-têtes, même traduction),
+/// pour que « le test passe » veuille dire « le cycle passera ». Rend
+/// `LlmAuth` pour une clé refusée et `LlmHttp` pour tout le reste (adresse
+/// injoignable, modèle inconnu, réponse qui n'est pas du chat), avec le détail
+/// du serveur.
+pub fn probe(config: &LlmConfig) -> Result<(), CoreError> {
+    let params = json!({
+        "model": config.model,
+        "max_tokens": 16,
+        "temperature": 0,
+        "messages": [{"role": "user", "content": "ping"}],
+    });
+    let body = match config.provider {
+        LlmProvider::Local => {
+            return match config.local {
+                Some(_) => Ok(()),
+                None => Err(CoreError::LlmHttp("aucun moteur local attaché".into())),
+            };
+        }
+        LlmProvider::Anthropic => post_anthropic(config, &params, Patience::PROBE)?,
+        LlmProvider::OpenAiCompatible => {
+            let raw = post_openai_raw(config, &params, Patience::PROBE)?;
+            // Un 200 qui n'est pas une réponse de chat (une page d'accueil, un
+            // tableau de bord servi à la racine) passerait sinon pour un succès.
+            if raw["choices"].as_array().map_or(true, |c| c.is_empty()) {
+                return Err(CoreError::LlmHttp(
+                    "le serveur a répondu, mais pas comme l'API chat d'OpenAI (aucun « choices »)".into(),
+                ));
+            }
+            return Ok(());
+        }
+    };
+    if body["content"].is_array() {
+        Ok(())
+    } else {
+        Err(CoreError::LlmHttp("réponse inattendue du service de tri".into()))
     }
 }
 
@@ -426,6 +493,7 @@ fn retryable(e: &ureq::Error) -> bool {
 fn send_with_retry(
     build: impl Fn() -> ureq::Request,
     body: &str,
+    patience: Patience,
 ) -> Result<ureq::Response, CoreError> {
     let mut attempt: u32 = 0;
     loop {
@@ -433,7 +501,7 @@ fn send_with_retry(
             Ok(response) => return Ok(response),
             Err(e) => {
                 attempt += 1;
-                if attempt >= HTTP_ATTEMPTS || !retryable(&e) {
+                if attempt >= patience.attempts || !retryable(&e) {
                     return Err(http_error(e));
                 }
                 std::thread::sleep(std::time::Duration::from_secs(
@@ -466,7 +534,7 @@ fn http_error(e: ureq::Error) -> CoreError {
 
 /// POST /v1/messages with the config's key/fuel-proxy routing. The request is
 /// already Anthropic-shaped and the response needs no translation.
-fn post_anthropic(config: &LlmConfig, params: &Value) -> Result<Value, CoreError> {
+fn post_anthropic(config: &LlmConfig, params: &Value, patience: Patience) -> Result<Value, CoreError> {
     let base = config
         .base_url
         .as_deref()
@@ -476,7 +544,7 @@ fn post_anthropic(config: &LlmConfig, params: &Value) -> Result<Value, CoreError
 
     let build = || {
         let request = ureq::post(&url)
-            .timeout(std::time::Duration::from_secs(600))
+            .timeout(patience.timeout)
             .set("content-type", "application/json")
             .set("anthropic-version", ANTHROPIC_VERSION);
         match &config.fuel_token {
@@ -487,10 +555,29 @@ fn post_anthropic(config: &LlmConfig, params: &Value) -> Result<Value, CoreError
         }
     };
 
-    let response = send_with_retry(build, &params.to_string())?;
+    let response = send_with_retry(build, &params.to_string(), patience)?;
     response
         .into_json()
         .map_err(|e| CoreError::LlmHttp(format!("invalid response body: {e}")))
+}
+
+/// L'adresse de `chat/completions` à partir de ce que l'utilisateur a collé.
+///
+/// Chaque serveur documente son adresse à sa façon : `http://localhost:3001/v1`
+/// (freellmapi), `https://openrouter.ai/api/v1`, `http://localhost:11434`
+/// (Ollama), ou l'adresse complète de l'appel. L'écran demandait `…/v1` alors
+/// que cette fonction ajoutait `/v1` derrière : l'appel partait vers
+/// `/v1/v1/chat/completions` et revenait en 404, sans que rien ne dise
+/// pourquoi. Les quatre formes mènent maintenant au même endroit.
+pub fn openai_chat_url(base: &str) -> String {
+    let mut base = base.trim().trim_end_matches('/');
+    if let Some(b) = base.strip_suffix("/chat/completions") {
+        base = b.trim_end_matches('/');
+    }
+    if let Some(b) = base.strip_suffix("/v1") {
+        base = b.trim_end_matches('/');
+    }
+    format!("{base}/v1/chat/completions")
 }
 
 /// POST /v1/chat/completions (OpenAI, Ollama, vLLM, LM Studio, OpenRouter…):
@@ -499,28 +586,28 @@ fn post_anthropic(config: &LlmConfig, params: &Value) -> Result<Value, CoreError
 /// `finish_reason` is mapped to `stop_reason` — the two normalisations measured
 /// on a foreign provider (a foreign provider chokes on `cache_control` and never emits
 /// Anthropic's `stop_reason`, so both must be synthesised at this boundary).
-fn post_openai(config: &LlmConfig, params: &Value) -> Result<Value, CoreError> {
-    let base = config
-        .base_url
-        .as_deref()
-        .unwrap_or("https://api.openai.com")
-        .trim_end_matches('/');
-    let url = format!("{base}/v1/chat/completions");
+fn post_openai(config: &LlmConfig, params: &Value, patience: Patience) -> Result<Value, CoreError> {
+    Ok(openai_to_anthropic(&post_openai_raw(config, params, patience)?))
+}
+
+/// La réponse telle que le serveur l'a rendue, avant traduction.
+fn post_openai_raw(config: &LlmConfig, params: &Value, patience: Patience) -> Result<Value, CoreError> {
+    let url = openai_chat_url(config.base_url.as_deref().unwrap_or("https://api.openai.com"));
 
     let build = || {
         ureq::post(&url)
-            .timeout(std::time::Duration::from_secs(600))
+            .timeout(patience.timeout)
             .set("content-type", "application/json")
             .set("authorization", &format!("Bearer {}", config.api_key))
     };
     let response = send_with_retry(
         build,
         &anthropic_to_openai(config, params).to_string(),
+        patience,
     )?;
-    let body: Value = response
+    response
         .into_json()
-        .map_err(|e| CoreError::LlmHttp(format!("invalid response body: {e}")))?;
-    Ok(openai_to_anthropic(&body))
+        .map_err(|e| CoreError::LlmHttp(format!("invalid response body: {e}")))
 }
 
 /// Concatenate the `text` of an Anthropic content value — a bare string, or an
@@ -1142,6 +1229,67 @@ mod tests {
         // A context that states a wrong weekday is worse than one that states none.
         assert_eq!(today_with_weekday("hier"), "hier");
         assert_eq!(today_with_weekday(""), "");
+    }
+
+    #[test]
+    fn the_four_ways_to_paste_an_endpoint_reach_the_same_url() {
+        for pasted in [
+            "http://localhost:3001",
+            "http://localhost:3001/",
+            "http://localhost:3001/v1",
+            "http://localhost:3001/v1/",
+            " http://localhost:3001/v1/chat/completions ",
+        ] {
+            assert_eq!(openai_chat_url(pasted), "http://localhost:3001/v1/chat/completions", "{pasted:?}");
+        }
+        // Un chemin propre au fournisseur est gardé, seul le /v1 final tombe.
+        assert_eq!(
+            openai_chat_url("https://openrouter.ai/api/v1"),
+            "https://openrouter.ai/api/v1/chat/completions"
+        );
+    }
+
+    #[test]
+    fn an_endpoint_pasted_with_v1_is_not_called_on_v1_v1() {
+        let (base, rx) = stub_server(vec![OA_FILLED]);
+        let cfg = cfg_provider(format!("{base}/v1"), LlmProvider::OpenAiCompatible);
+        post_messages(&cfg, &json!({"messages": []})).unwrap();
+        let req = rx.recv().unwrap();
+        assert!(req.starts_with("POST /v1/chat/completions "), "{}", req.lines().next().unwrap());
+    }
+
+    #[test]
+    fn probe_passes_on_a_chat_reply_and_sends_the_configured_model() {
+        let (base, rx) = stub_server(vec![OA_FILLED]);
+        let cfg = cfg_provider(format!("{base}/v1"), LlmProvider::OpenAiCompatible);
+        probe(&cfg).unwrap();
+        let req = rx.recv().unwrap();
+        assert!(req.contains("\"model\":\"test\""));
+        assert!(req.to_lowercase().contains("authorization: bearer k"));
+    }
+
+    #[test]
+    fn probe_refuses_a_200_that_is_not_chat() {
+        let (base, _rx) = stub_server(vec![r#"{"status":"ok"}"#]);
+        let cfg = cfg_provider(base, LlmProvider::OpenAiCompatible);
+        assert!(matches!(probe(&cfg), Err(CoreError::LlmHttp(_))));
+    }
+
+    #[test]
+    fn probe_reports_a_refused_key_once_without_retrying() {
+        let (base, hits) = stub_status(401, 3);
+        let cfg = cfg_provider(base, LlmProvider::OpenAiCompatible);
+        assert!(matches!(probe(&cfg), Err(CoreError::LlmAuth(_))));
+        assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn probe_does_not_retry_a_server_error() {
+        // Le cycle rejoue un 5xx trois fois ; devant l'écran, un seul essai.
+        let (base, hits) = stub_status(503, 3);
+        let cfg = cfg_provider(base, LlmProvider::OpenAiCompatible);
+        assert!(matches!(probe(&cfg), Err(CoreError::LlmHttp(_))));
+        assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 1);
     }
 
     #[test]
