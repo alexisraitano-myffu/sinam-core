@@ -939,6 +939,27 @@ fn llm_config_opt(
     }))
 }
 
+/// Les paramètres d'un appel Anthropic, accordés au modèle : sans réglage
+/// d'échantillonnage et avec la place de réfléchir pour un modèle qui réfléchit,
+/// à `temperature: 0` sinon. Pour les appels que Python fait lui-même, afin
+/// qu'ils suivent la même règle que ceux du cœur.
+#[pyfunction]
+fn adapt_anthropic_params(model: &str, params: &str) -> PyResult<String> {
+    let params: serde_json::Value =
+        serde_json::from_str(params).map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+    let config = sinam_core::LlmConfig {
+        model: model.to_string(),
+        api_key: String::new(),
+        provider: sinam_core::LlmProvider::Anthropic,
+        local: None,
+        base_url: None,
+        fuel_token: None,
+        prompts_dir: String::new(),
+        today: String::new(),
+    };
+    Ok(sinam_core::adapt_params(&config, &params).to_string())
+}
+
 /// Un appel minimal au modèle réglé (le bouton « Tester »). Lève
 /// PermissionError pour une clé refusée, ConnectionError pour le reste
 /// (adresse, modèle, serveur), avec le détail du serveur.
@@ -1202,6 +1223,7 @@ fn sinam_core_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(parse_classify_text, m)?)?;
     m.add_function(wrap_pyfunction!(merge_classify_halves, m)?)?;
     m.add_function(wrap_pyfunction!(probe_llm, m)?)?;
+    m.add_function(wrap_pyfunction!(adapt_anthropic_params, m)?)?;
     m.add_function(wrap_pyfunction!(next_occurrence, m)?)?;
     m.add_function(wrap_pyfunction!(extract_urls, m)?)?;
     m.add_function(wrap_pyfunction!(extract_page, m)?)?;

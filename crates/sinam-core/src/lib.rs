@@ -31,7 +31,7 @@ mod usage;
 
 pub use digest::next_occurrence_str;
 pub use embedder::{CoreError, Embedder, EMBEDDING_DIM};
-pub use llm::{parse_classify_text, probe as probe_llm, openai_chat_url, LlmConfig, LlmProvider, LocalLlm, merge_halves, ClassifyHalf};
+pub use llm::{parse_classify_text, probe as probe_llm, openai_chat_url, thinks_by_default, adapt_params, LlmConfig, LlmProvider, LocalLlm, merge_halves, ClassifyHalf};
 pub use pairing::{accept as pairing_accept, open as pairing_open, seal as pairing_seal, PairingOffer, PairingSession};
 pub use pairing::{code_confirm_mac, code_confirm_verify, CodePairing};
 pub use resources::{extract_page, extract_urls, fetch_and_extract, PageText};
