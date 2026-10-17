@@ -646,6 +646,15 @@ pub fn pairing_code_confirm_verify(
     ))
 }
 
+/// Un appel minimal au modèle réglé, pour le bouton « Tester » : `Ok` veut
+/// dire que le cycle passera par ce chemin. `LlmAuth` = clé refusée,
+/// `LlmHttp` = adresse, modèle ou serveur (le détail est dans le message).
+/// Bloquant, jusqu'à vingt secondes : jamais sur le thread principal.
+#[uniffi::export]
+pub fn probe_llm(config: LlmSettings) -> Result<(), CoreError> {
+    Ok(sinam_core::probe_llm(&config.into())?)
+}
+
 /// Scanner side: decode the QR and derive the channel key.
 #[uniffi::export]
 pub fn pairing_accept(qr: String) -> Result<PairingAccept, CoreError> {

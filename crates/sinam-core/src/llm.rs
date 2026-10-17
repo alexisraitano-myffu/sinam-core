@@ -243,12 +243,14 @@ impl Brain {
         }
         drop(conn);
 
-        Ok(json!({
+        // Accordé au modèle dès ici : le chemin batch du backend envoie ces
+        // paramètres tels quels, sans passer par `post_messages`.
+        Ok(adapt_params(config, &json!({
             "model": config.model,
             "max_tokens": MAX_TOKENS,
             "system": system_blocks,
             "messages": [{"role": "user", "content": content}],
-        }))
+        })))
     }
 
     /// One half: build params, POST /v1/messages, parse. Billing is recorded per
@@ -270,9 +272,9 @@ impl Brain {
             let conn = self.storage.lock()?;
             crate::usage::record(&conn, config, crate::usage::Op::Classify, LlmUsage::from_body(&body));
         }
-        let text = body["content"][0]["text"].as_str().unwrap_or("");
+        let text = response_text(&body);
         let stop_reason = body["stop_reason"].as_str();
-        parse_classify_text(text, content.chars().count(), stop_reason)
+        parse_classify_text(&text, content.chars().count(), stop_reason)
     }
 
     /// Port of `step1_classify`, in TWO independent calls.
@@ -332,26 +334,127 @@ pub fn merge_halves(note: Value, graph: Value) -> Value {
 /// helpers ([`response_text`], [`unusable`], [`parse_classify_text`]) are
 /// provider-agnostic. HTTP/network failures are `LlmHttp` (abort-the-run policy).
 pub(crate) fn post_messages(config: &LlmConfig, params: &Value) -> Result<Value, CoreError> {
-    // the cycle is a classifier, not a writer: sampling buys nothing
-    // and costs reproducibility. Left unset, the same capture took different
-    // routing branches between two runs, which made every parity measurement
-    // argue with itself. A caller that wants sampling can still pass its own.
-    let owned;
-    let params = match params.get("temperature") {
-        Some(_) => params,
-        None => {
-            let mut p = params.clone();
-            if let Value::Object(m) = &mut p {
-                m.insert("temperature".into(), json!(0));
+    let params = adapt_params(config, params);
+    match config.provider {
+        LlmProvider::Anthropic => post_anthropic(config, &params, Patience::CYCLE),
+        LlmProvider::OpenAiCompatible => post_openai(config, &params, Patience::CYCLE),
+        LlmProvider::Local => post_local(config, &params),
+    }
+}
+
+/// Les modèles Anthropic qui réfléchissent avant de répondre, par défaut et
+/// sans qu'on le demande. Ils refusent d'un 400 toute température autre que 1,
+/// et leur réflexion se paie sur le même `max_tokens` que la réponse.
+pub fn thinks_by_default(model: &str) -> bool {
+    const FAMILIES: &[&str] = &[
+        "claude-haiku-5",
+        "claude-sonnet-5",
+        "claude-opus-5",
+        "claude-opus-4-7",
+        "claude-opus-4-8",
+        "claude-fable",
+        "claude-mythos",
+    ];
+    FAMILIES.iter().any(|f| model.starts_with(f))
+}
+
+/// Le plancher de `max_tokens` d'un modèle qui réfléchit. Un plafond calé sur
+/// la seule réponse (1024 pour un résumé) laissait la réflexion tout manger et
+/// rendait un corps vide tronqué. C'est un plafond, pas une cible : on ne paie
+/// que ce qui est produit.
+const THINKING_MAX_TOKENS: u64 = 16_000;
+
+/// Ce que l'appel envoie, accordé au modèle visé.
+///
+/// Un modèle classique reçoit `temperature: 0` : le cycle est un classifieur,
+/// pas un rédacteur, et laissé libre, la même capture prenait des branches de
+/// routage différentes d'un passage à l'autre, ce qui faisait se contredire
+/// chaque mesure de parité. Un appelant qui veut échantillonner passe la sienne.
+///
+/// Un modèle qui réfléchit refuserait cette température : on retire tout
+/// réglage d'échantillonnage et on relève `max_tokens` au plancher. Seul le
+/// fournisseur Anthropic est concerné, un serveur compatible OpenAI peut
+/// porter n'importe quel nom de modèle.
+pub fn adapt_params(config: &LlmConfig, params: &Value) -> Value {
+    let mut p = params.clone();
+    let Value::Object(m) = &mut p else { return p };
+    if config.provider == LlmProvider::Anthropic && thinks_by_default(&config.model) {
+        for k in ["temperature", "top_p", "top_k"] {
+            m.remove(k);
+        }
+        let current = m.get("max_tokens").and_then(Value::as_u64).unwrap_or(0);
+        m.insert("max_tokens".into(), json!(current.max(THINKING_MAX_TOKENS)));
+    } else if !m.contains_key("temperature") {
+        m.insert("temperature".into(), json!(0));
+    }
+    p
+}
+
+/// Combien de temps un appel attend, et combien de fois il se rejoue.
+#[derive(Clone, Copy)]
+struct Patience {
+    timeout: std::time::Duration,
+    attempts: u32,
+}
+
+impl Patience {
+    /// Le cycle : une classification longue peut prendre des minutes, et une
+    /// microcoupure se traverse (voir `send_with_retry`).
+    const CYCLE: Patience = Patience {
+        timeout: std::time::Duration::from_secs(600),
+        attempts: HTTP_ATTEMPTS,
+    };
+    /// Le bouton « Tester » : quelqu'un attend devant l'écran. Un seul essai,
+    /// et un serveur muet au bout de vingt secondes est une réponse en soi.
+    const PROBE: Patience = Patience {
+        timeout: std::time::Duration::from_secs(20),
+        attempts: 1,
+    };
+}
+
+/// Un vrai appel, le plus petit possible, pour savoir AVANT la nuit si le
+/// réglage marche. Ce que l'utilisateur colle (adresse, nom de modèle, clé) ne
+/// se vérifie pas à la forme : seul le serveur sait s'il connaît ce modèle et
+/// accepte cette clé. Sans ce test, une faute de frappe se découvrait le
+/// lendemain matin, par une file restée pleine.
+///
+/// Même chemin que le cycle (même adresse, mêmes en-têtes, même traduction),
+/// pour que « le test passe » veuille dire « le cycle passera ». Rend
+/// `LlmAuth` pour une clé refusée et `LlmHttp` pour tout le reste (adresse
+/// injoignable, modèle inconnu, réponse qui n'est pas du chat), avec le détail
+/// du serveur.
+pub fn probe(config: &LlmConfig) -> Result<(), CoreError> {
+    // Un modèle qui réfléchit refuse la température et dépenserait 16 jetons
+    // à réfléchir sans répondre : `adapt_params` l'accorde comme pour le cycle.
+    let params = adapt_params(config, &json!({
+        "model": config.model,
+        "max_tokens": 16,
+        "messages": [{"role": "user", "content": "ping"}],
+    }));
+    let body = match config.provider {
+        LlmProvider::Local => {
+            return match config.local {
+                Some(_) => Ok(()),
+                None => Err(CoreError::LlmHttp("aucun moteur local attaché".into())),
+            };
+        }
+        LlmProvider::Anthropic => post_anthropic(config, &params, Patience::PROBE)?,
+        LlmProvider::OpenAiCompatible => {
+            let raw = post_openai_raw(config, &params, Patience::PROBE)?;
+            // Un 200 qui n'est pas une réponse de chat (une page d'accueil, un
+            // tableau de bord servi à la racine) passerait sinon pour un succès.
+            if raw["choices"].as_array().map_or(true, |c| c.is_empty()) {
+                return Err(CoreError::LlmHttp(
+                    "le serveur a répondu, mais pas comme l'API chat d'OpenAI (aucun « choices »)".into(),
+                ));
             }
-            owned = p;
-            &owned
+            return Ok(());
         }
     };
-    match config.provider {
-        LlmProvider::Anthropic => post_anthropic(config, params),
-        LlmProvider::OpenAiCompatible => post_openai(config, params),
-        LlmProvider::Local => post_local(config, params),
+    if body["content"].is_array() {
+        Ok(())
+    } else {
+        Err(CoreError::LlmHttp("réponse inattendue du service de tri".into()))
     }
 }
 
@@ -426,6 +529,7 @@ fn retryable(e: &ureq::Error) -> bool {
 fn send_with_retry(
     build: impl Fn() -> ureq::Request,
     body: &str,
+    patience: Patience,
 ) -> Result<ureq::Response, CoreError> {
     let mut attempt: u32 = 0;
     loop {
@@ -433,7 +537,7 @@ fn send_with_retry(
             Ok(response) => return Ok(response),
             Err(e) => {
                 attempt += 1;
-                if attempt >= HTTP_ATTEMPTS || !retryable(&e) {
+                if attempt >= patience.attempts || !retryable(&e) {
                     return Err(http_error(e));
                 }
                 std::thread::sleep(std::time::Duration::from_secs(
@@ -466,7 +570,7 @@ fn http_error(e: ureq::Error) -> CoreError {
 
 /// POST /v1/messages with the config's key/fuel-proxy routing. The request is
 /// already Anthropic-shaped and the response needs no translation.
-fn post_anthropic(config: &LlmConfig, params: &Value) -> Result<Value, CoreError> {
+fn post_anthropic(config: &LlmConfig, params: &Value, patience: Patience) -> Result<Value, CoreError> {
     let base = config
         .base_url
         .as_deref()
@@ -476,7 +580,7 @@ fn post_anthropic(config: &LlmConfig, params: &Value) -> Result<Value, CoreError
 
     let build = || {
         let request = ureq::post(&url)
-            .timeout(std::time::Duration::from_secs(600))
+            .timeout(patience.timeout)
             .set("content-type", "application/json")
             .set("anthropic-version", ANTHROPIC_VERSION);
         match &config.fuel_token {
@@ -487,10 +591,29 @@ fn post_anthropic(config: &LlmConfig, params: &Value) -> Result<Value, CoreError
         }
     };
 
-    let response = send_with_retry(build, &params.to_string())?;
+    let response = send_with_retry(build, &params.to_string(), patience)?;
     response
         .into_json()
         .map_err(|e| CoreError::LlmHttp(format!("invalid response body: {e}")))
+}
+
+/// L'adresse de `chat/completions` à partir de ce que l'utilisateur a collé.
+///
+/// Chaque serveur documente son adresse à sa façon : `http://localhost:3001/v1`
+/// (freellmapi), `https://openrouter.ai/api/v1`, `http://localhost:11434`
+/// (Ollama), ou l'adresse complète de l'appel. L'écran demandait `…/v1` alors
+/// que cette fonction ajoutait `/v1` derrière : l'appel partait vers
+/// `/v1/v1/chat/completions` et revenait en 404, sans que rien ne dise
+/// pourquoi. Les quatre formes mènent maintenant au même endroit.
+pub fn openai_chat_url(base: &str) -> String {
+    let mut base = base.trim().trim_end_matches('/');
+    if let Some(b) = base.strip_suffix("/chat/completions") {
+        base = b.trim_end_matches('/');
+    }
+    if let Some(b) = base.strip_suffix("/v1") {
+        base = b.trim_end_matches('/');
+    }
+    format!("{base}/v1/chat/completions")
 }
 
 /// POST /v1/chat/completions (OpenAI, Ollama, vLLM, LM Studio, OpenRouter…):
@@ -499,28 +622,28 @@ fn post_anthropic(config: &LlmConfig, params: &Value) -> Result<Value, CoreError
 /// `finish_reason` is mapped to `stop_reason` — the two normalisations measured
 /// on a foreign provider (a foreign provider chokes on `cache_control` and never emits
 /// Anthropic's `stop_reason`, so both must be synthesised at this boundary).
-fn post_openai(config: &LlmConfig, params: &Value) -> Result<Value, CoreError> {
-    let base = config
-        .base_url
-        .as_deref()
-        .unwrap_or("https://api.openai.com")
-        .trim_end_matches('/');
-    let url = format!("{base}/v1/chat/completions");
+fn post_openai(config: &LlmConfig, params: &Value, patience: Patience) -> Result<Value, CoreError> {
+    Ok(openai_to_anthropic(&post_openai_raw(config, params, patience)?))
+}
+
+/// La réponse telle que le serveur l'a rendue, avant traduction.
+fn post_openai_raw(config: &LlmConfig, params: &Value, patience: Patience) -> Result<Value, CoreError> {
+    let url = openai_chat_url(config.base_url.as_deref().unwrap_or("https://api.openai.com"));
 
     let build = || {
         ureq::post(&url)
-            .timeout(std::time::Duration::from_secs(600))
+            .timeout(patience.timeout)
             .set("content-type", "application/json")
             .set("authorization", &format!("Bearer {}", config.api_key))
     };
     let response = send_with_retry(
         build,
         &anthropic_to_openai(config, params).to_string(),
+        patience,
     )?;
-    let body: Value = response
+    response
         .into_json()
-        .map_err(|e| CoreError::LlmHttp(format!("invalid response body: {e}")))?;
-    Ok(openai_to_anthropic(&body))
+        .map_err(|e| CoreError::LlmHttp(format!("invalid response body: {e}")))
 }
 
 /// Concatenate the `text` of an Anthropic content value — a bare string, or an
@@ -585,12 +708,20 @@ fn openai_to_anthropic(body: &Value) -> Value {
     })
 }
 
-/// `content[0].text` of a /v1/messages response, stripped — the plain-text
-/// consumers (summaries). Empty text is the caller's problem.
+/// The text of a /v1/messages response, stripped. Only `text` blocks count: a
+/// model that thinks opens its reply with `thinking` blocks, so `content[0]`
+/// is no longer the answer. Empty text is the caller's problem.
 pub(crate) fn response_text(body: &Value) -> String {
-    body["content"][0]["text"]
-        .as_str()
-        .unwrap_or("")
+    body["content"]
+        .as_array()
+        .map(|blocks| {
+            blocks
+                .iter()
+                .filter(|b| b["type"].as_str().map_or(true, |t| t == "text"))
+                .filter_map(|b| b["text"].as_str())
+                .collect::<String>()
+        })
+        .unwrap_or_default()
         .trim()
         .to_string()
 }
@@ -608,7 +739,7 @@ const EMPTY_RETRIES: usize = 1;
 /// the model doesn't think. Retrying on emptiness alone caught that only by
 /// accident, and never caught a truncation that left partial text behind.
 fn unusable(body: &Value, text: &str) -> bool {
-    text.is_empty() || body["stop_reason"].as_str() == Some("max_tokens")
+    text.is_empty() || matches!(body["stop_reason"].as_str(), Some("max_tokens" | "refusal"))
 }
 
 /// `post_messages` + `response_text`, retried while the response is unusable
@@ -656,6 +787,13 @@ pub fn parse_classify_text(
     if stop_reason == Some("max_tokens") {
         return Err(CoreError::LlmContent(format!(
             "classification tronquée (max_tokens) — capture trop longue/dense ({content_len} chars)"
+        )));
+    }
+    // Un refus n'est ni une panne ni une capture vide : le dire, pour que la
+    // capture reste en file avec une raison lisible au lieu d'un JSON illisible.
+    if stop_reason == Some("refusal") {
+        return Err(CoreError::LlmContent(format!(
+            "le modèle a refusé de classer cette capture ({content_len} chars)"
         )));
     }
     let mut raw = text.trim().to_string();
@@ -1145,6 +1283,67 @@ mod tests {
     }
 
     #[test]
+    fn the_four_ways_to_paste_an_endpoint_reach_the_same_url() {
+        for pasted in [
+            "http://localhost:3001",
+            "http://localhost:3001/",
+            "http://localhost:3001/v1",
+            "http://localhost:3001/v1/",
+            " http://localhost:3001/v1/chat/completions ",
+        ] {
+            assert_eq!(openai_chat_url(pasted), "http://localhost:3001/v1/chat/completions", "{pasted:?}");
+        }
+        // Un chemin propre au fournisseur est gardé, seul le /v1 final tombe.
+        assert_eq!(
+            openai_chat_url("https://openrouter.ai/api/v1"),
+            "https://openrouter.ai/api/v1/chat/completions"
+        );
+    }
+
+    #[test]
+    fn an_endpoint_pasted_with_v1_is_not_called_on_v1_v1() {
+        let (base, rx) = stub_server(vec![OA_FILLED]);
+        let cfg = cfg_provider(format!("{base}/v1"), LlmProvider::OpenAiCompatible);
+        post_messages(&cfg, &json!({"messages": []})).unwrap();
+        let req = rx.recv().unwrap();
+        assert!(req.starts_with("POST /v1/chat/completions "), "{}", req.lines().next().unwrap());
+    }
+
+    #[test]
+    fn probe_passes_on_a_chat_reply_and_sends_the_configured_model() {
+        let (base, rx) = stub_server(vec![OA_FILLED]);
+        let cfg = cfg_provider(format!("{base}/v1"), LlmProvider::OpenAiCompatible);
+        probe(&cfg).unwrap();
+        let req = rx.recv().unwrap();
+        assert!(req.contains("\"model\":\"test\""));
+        assert!(req.to_lowercase().contains("authorization: bearer k"));
+    }
+
+    #[test]
+    fn probe_refuses_a_200_that_is_not_chat() {
+        let (base, _rx) = stub_server(vec![r#"{"status":"ok"}"#]);
+        let cfg = cfg_provider(base, LlmProvider::OpenAiCompatible);
+        assert!(matches!(probe(&cfg), Err(CoreError::LlmHttp(_))));
+    }
+
+    #[test]
+    fn probe_reports_a_refused_key_once_without_retrying() {
+        let (base, hits) = stub_status(401, 3);
+        let cfg = cfg_provider(base, LlmProvider::OpenAiCompatible);
+        assert!(matches!(probe(&cfg), Err(CoreError::LlmAuth(_))));
+        assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn probe_does_not_retry_a_server_error() {
+        // Le cycle rejoue un 5xx trois fois ; devant l'écran, un seul essai.
+        let (base, hits) = stub_status(503, 3);
+        let cfg = cfg_provider(base, LlmProvider::OpenAiCompatible);
+        assert!(matches!(probe(&cfg), Err(CoreError::LlmHttp(_))));
+        assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    #[test]
     fn openai_request_drops_cache_control_and_flattens_system() {
         let (base, rx) = stub_server(vec![OA_FILLED]);
         let cfg = cfg_provider(base, LlmProvider::OpenAiCompatible);
@@ -1169,5 +1368,70 @@ mod tests {
         assert_eq!(sent["messages"][0]["content"], "tu es un classifieur");
         assert_eq!(sent["messages"][1]["role"], "user");
         assert_eq!(sent["messages"][1]["content"], "note du jour");
+    }
+
+    fn model_cfg(model: &str, provider: LlmProvider) -> LlmConfig {
+        LlmConfig { model: model.into(), ..cfg_provider(String::new(), provider) }
+    }
+
+    #[test]
+    fn a_classic_model_is_pinned_to_temperature_zero() {
+        let c = model_cfg("claude-haiku-4-5-20251001", LlmProvider::Anthropic);
+        let p = adapt_params(&c, &json!({"model": c.model, "max_tokens": 1024}));
+        assert_eq!(p["temperature"], 0);
+        assert_eq!(p["max_tokens"], 1024);
+        // une température choisie par l'appelant est respectée
+        let p = adapt_params(&c, &json!({"temperature": 0.7}));
+        assert_eq!(p["temperature"], 0.7);
+    }
+
+    #[test]
+    fn a_thinking_model_gets_no_sampling_and_room_to_think() {
+        let c = model_cfg("claude-haiku-5-5", LlmProvider::Anthropic);
+        let p = adapt_params(
+            &c,
+            &json!({"max_tokens": 1024, "temperature": 0, "top_p": 0.9, "top_k": 5}),
+        );
+        assert!(p.get("temperature").is_none() && p.get("top_p").is_none() && p.get("top_k").is_none());
+        assert_eq!(p["max_tokens"], 16_000);
+        // un plafond déjà plus haut n'est pas rabaissé, et l'accord est idempotent
+        let p = adapt_params(&c, &json!({"max_tokens": 32_000}));
+        assert_eq!(adapt_params(&c, &p), p);
+        assert_eq!(p["max_tokens"], 32_000);
+    }
+
+    #[test]
+    fn a_model_name_on_an_openai_server_is_not_interpreted() {
+        // un serveur compatible OpenAI peut servir n'importe quoi sous ce nom
+        let c = model_cfg("claude-haiku-5-5", LlmProvider::OpenAiCompatible);
+        let p = adapt_params(&c, &json!({"max_tokens": 1024}));
+        assert_eq!(p["temperature"], 0);
+        assert_eq!(p["max_tokens"], 1024);
+    }
+
+    #[test]
+    fn thinking_families_are_recognised() {
+        for m in ["claude-haiku-5-5", "claude-sonnet-5", "claude-opus-5", "claude-opus-4-7"] {
+            assert!(thinks_by_default(m), "{m}");
+        }
+        for m in ["claude-haiku-4-5-20251001", "claude-sonnet-4-6", "gpt-5", "gemma"] {
+            assert!(!thinks_by_default(m), "{m}");
+        }
+    }
+
+    #[test]
+    fn the_answer_is_read_past_the_thinking_blocks() {
+        let body = json!({"content": [
+            {"type": "thinking", "thinking": "hmm", "signature": "x"},
+            {"type": "text", "text": "  {\"a\":1}"},
+        ]});
+        assert_eq!(response_text(&body), "{\"a\":1}");
+    }
+
+    #[test]
+    fn a_refusal_is_reported_not_parsed() {
+        let err = parse_classify_text("", 12, Some("refusal")).unwrap_err();
+        assert!(matches!(err, CoreError::LlmContent(m) if m.contains("refusé")));
+        assert!(unusable(&json!({"stop_reason": "refusal"}), "partiel"));
     }
 }

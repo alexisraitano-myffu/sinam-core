@@ -939,6 +939,53 @@ fn llm_config_opt(
     }))
 }
 
+/// Les paramètres d'un appel Anthropic, accordés au modèle : sans réglage
+/// d'échantillonnage et avec la place de réfléchir pour un modèle qui réfléchit,
+/// à `temperature: 0` sinon. Pour les appels que Python fait lui-même, afin
+/// qu'ils suivent la même règle que ceux du cœur.
+#[pyfunction]
+fn adapt_anthropic_params(model: &str, params: &str) -> PyResult<String> {
+    let params: serde_json::Value =
+        serde_json::from_str(params).map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+    let config = sinam_core::LlmConfig {
+        model: model.to_string(),
+        api_key: String::new(),
+        provider: sinam_core::LlmProvider::Anthropic,
+        local: None,
+        base_url: None,
+        fuel_token: None,
+        prompts_dir: String::new(),
+        today: String::new(),
+    };
+    Ok(sinam_core::adapt_params(&config, &params).to_string())
+}
+
+/// Un appel minimal au modèle réglé (le bouton « Tester »). Lève
+/// PermissionError pour une clé refusée, ConnectionError pour le reste
+/// (adresse, modèle, serveur), avec le détail du serveur.
+#[pyfunction]
+#[pyo3(signature = (model, api_key, base_url=None, fuel_token=None, provider=None))]
+fn probe_llm(
+    py: Python<'_>,
+    model: &str,
+    api_key: &str,
+    base_url: Option<&str>,
+    fuel_token: Option<&str>,
+    provider: Option<&str>,
+) -> PyResult<()> {
+    let config = sinam_core::LlmConfig {
+        model: model.to_string(),
+        api_key: api_key.to_string(),
+        provider: py_provider(provider)?,
+        local: None,
+        base_url: base_url.map(String::from),
+        fuel_token: fuel_token.map(String::from),
+        prompts_dir: String::new(),
+        today: String::new(),
+    };
+    py.detach(|| sinam_core::probe_llm(&config)).map_err(brain_err)
+}
+
 /// The provider a Python host asks for. Stricter than `LlmProvider::parse`,
 /// which falls back to Anthropic on anything it doesn't know: here a typo in
 /// the backend config would silently send a "100 % local" user's captures to
@@ -1175,6 +1222,8 @@ fn sinam_core_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(connect, m)?)?;
     m.add_function(wrap_pyfunction!(parse_classify_text, m)?)?;
     m.add_function(wrap_pyfunction!(merge_classify_halves, m)?)?;
+    m.add_function(wrap_pyfunction!(probe_llm, m)?)?;
+    m.add_function(wrap_pyfunction!(adapt_anthropic_params, m)?)?;
     m.add_function(wrap_pyfunction!(next_occurrence, m)?)?;
     m.add_function(wrap_pyfunction!(extract_urls, m)?)?;
     m.add_function(wrap_pyfunction!(extract_page, m)?)?;
