@@ -1,6 +1,6 @@
 # sinam-core
 
-Le cerveau compilé unique de sinam — **complet depuis T5** : embeddings, stockage (schéma SQLite + sqlite-vec), classification + routing, decay, resummary/synthèse projet, digest hebdo, ressources web, sync P2P — écrit une fois en Rust et consommé partout : backend FastAPI Mac via PyO3, apps mobiles via UniFFI. Une seule implémentation, zéro divergence de logique entre plateformes. Repo public (Apache-2.0) : ne jamais y mettre d'URL Linear, de secrets ni de données utilisateur.
+Le cerveau compilé unique de sinam — **complet depuis T5** : embeddings, stockage (schéma SQLite + sqlite-vec), classification + routing, decay, resummary/synthèse projet, digest hebdo, ressources web, sync P2P — écrit une fois en Rust et consommé partout : backend FastAPI Mac via PyO3, apps mobiles via UniFFI. Une seule implémentation, zéro divergence de logique entre plateformes. Repo public (Apache-2.0) : ne jamais y mettre d'URL de suivi, de secrets ni de données utilisateur.
 
 ## Commands
 
@@ -99,7 +99,7 @@ Rules:
 
 ## Changelog & doc prod
 
-Suivis dans Linear, hors du repo (repo public : aucune URL de suivi ni identifiant de ticket, ni dans les fichiers commités ni dans les messages de commit — un identifiant nu n'apprend rien au lecteur et donne la cadence d'un backlog privé ; on écrit la raison, pas le numéro). Les liens et le rituel de mise à jour sont dans `CLAUDE.local.md` (non commité).
+Suivis hors du repo, dans le dépôt privé `sinam-app` : ses issues pour les tickets (cœur compris), le Project GitHub « sinam » pour le tableau, `docs/pilotage/` pour les changelogs et l'état dev. Jamais d'issue ici : ce repo est public, ses issues le seraient aussi. Aucune URL de suivi ni identifiant de ticket, ni dans les fichiers commités ni dans les messages de commit — un identifiant nu n'apprend rien au lecteur et donne la cadence d'un backlog privé ; on écrit la raison, pas le numéro.
 
 ## Environment
 
